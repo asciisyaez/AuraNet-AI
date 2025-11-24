@@ -186,6 +186,12 @@ const FloorPlanEditor: React.FC = () => {
     setIsOptimizing(true);
     setAiSuggestion('Evaluating layout with simulated annealing...');
 
+    if (aps.length === 0) {
+      setAiSuggestion('Add at least one access point before running AI optimization.');
+      setIsOptimizing(false);
+      return;
+    }
+
     const before = evaluateCoverage(aps, walls, signalThreshold);
     const { bestAps, metrics } = runSimulatedAnnealing(aps, walls, signalThreshold);
     setAps(bestAps);
