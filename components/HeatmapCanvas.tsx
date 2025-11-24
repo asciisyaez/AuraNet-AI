@@ -119,8 +119,9 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
           const dx = (x + 0.5 - ap.x) * METERS_PER_PIXEL;
           const dy = (y + 0.5 - ap.y) * METERS_PER_PIXEL;
           const distance = Math.max(Math.hypot(dx, dy), 0.5);
+          const distanceKm = distance / 1000;
 
-          const fspl = 20 * log10(distance) + freqLog + 32.44;
+          const fspl = 20 * log10(distanceKm) + freqLog + 32.44;
           const wallLoss = computeWallLoss(wallSegments, ap.x, ap.y, x + 0.5, y + 0.5);
           const pathLoss = fspl + wallLoss;
 
