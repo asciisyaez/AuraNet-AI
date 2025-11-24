@@ -1,0 +1,5 @@
+{
+  "name": "AuraNet Planner AI",
+  "description": "AI-powered Wi-Fi planning and optimization tool featuring floor plan editing, heatmap visualization, and roaming analysis.",
+  "requestFramePermissions": []
+}
