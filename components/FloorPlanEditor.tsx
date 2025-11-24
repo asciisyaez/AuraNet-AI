@@ -229,6 +229,12 @@ const FloorPlanEditor: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const isSvg = file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg');
+    if (isSvg) {
+      alert('SVG uploads are not supported for security reasons. Please upload a PNG or JPEG file.');
+      return;
+    }
+
     const allowedTypes = ['image/png', 'image/jpeg'];
     if (!allowedTypes.includes(file.type)) {
       alert('Please upload a PNG or JPEG file.');
