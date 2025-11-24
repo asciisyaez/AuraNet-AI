@@ -96,62 +96,77 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;
 
-    // Clear canvas
-    ctx.clearRect(0, 0, width, height);
-    
-    // Fill background with "weak signal" color (blue-ish/transparent)
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-    ctx.fillRect(0, 0, width, height);
+    const offCanvas = offscreenRef.current ?? document.createElement('canvas');
+    offCanvas.width = width;
+    offCanvas.height = height;
+    offscreenRef.current = offCanvas;
+    const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
+    if (!offCtx) return;
 
-    // Create a temporary canvas for blending signals
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = width;
-    tempCanvas.height = height;
-    const tempCtx = tempCanvas.getContext('2d');
+    const imageData = ctx.createImageData(width, height);
+    const data = imageData.data;
+    const offImage = offCtx.createImageData(width, height);
+    const offData = offImage.data;
 
-    if (!tempCtx) return;
+    const freqLog = 20 * log10(DEFAULT_FREQ_MHZ);
+    const minVal = Math.min(minDbm, maxDbm - 1);
+    const maxVal = Math.max(maxDbm, minDbm + 1);
 
-    // Draw each AP signal
-    aps.forEach(ap => {
-      // Radius depends on power. 20dBm ~= strong coverage for 150px approx in this scale
-      const radius = ap.power * 15; 
-      
-      const gradient = tempCtx.createRadialGradient(ap.x, ap.y, 10, ap.x, ap.y, radius);
-      
-      // Heatmap colors: Red (Strong) -> Yellow -> Green -> Blue (Weak)
-      gradient.addColorStop(0, 'rgba(239, 68, 68, 0.8)');   // Red -50dBm
-      gradient.addColorStop(0.4, 'rgba(245, 158, 11, 0.6)'); // Orange
-      gradient.addColorStop(0.7, 'rgba(34, 197, 94, 0.4)');  // Green -65dBm
-      gradient.addColorStop(1, 'rgba(59, 130, 246, 0.0)');   // Fade out
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let bestSignal = -Infinity;
+        for (const ap of aps) {
+          const dx = (x + 0.5 - ap.x) * METERS_PER_PIXEL;
+          const dy = (y + 0.5 - ap.y) * METERS_PER_PIXEL;
+          const distance = Math.max(Math.hypot(dx, dy), 0.5);
+          const distanceKm = distance / 1000;
 
-      tempCtx.beginPath();
-      tempCtx.fillStyle = gradient;
-      tempCtx.arc(ap.x, ap.y, radius, 0, Math.PI * 2);
-      tempCtx.fill();
-    });
+          const fspl = 20 * log10(distanceKm) + freqLog + 32.44;
+          const wallLoss = computeWallLoss(wallSegments, ap.x, ap.y, x + 0.5, y + 0.5);
+          const pathLoss = fspl + wallLoss;
 
-    // Simple wall attenuation simulation (visual only)
-    // We just draw semi-transparent lines over the heatmap to show "blocking"
-    tempCtx.globalCompositeOperation = 'destination-out';
-    tempCtx.lineCap = 'round';
+          const ituLoss = 20 * log10(DEFAULT_FREQ_MHZ) + ITU_DISTANCE_EXPONENT * log10(distance) - 28;
+          const effectiveLoss = wallLoss > 0 ? pathLoss : Math.min(pathLoss, ituLoss);
 
-    walls.forEach(wall => {
-      tempCtx.beginPath();
-      tempCtx.moveTo(wall.x1, wall.y1);
-      tempCtx.lineTo(wall.x2, wall.y2);
-      tempCtx.lineWidth = Math.max(wall.thickness, 6);
-      tempCtx.globalAlpha = Math.min(0.9, 0.25 + wall.attenuation / 18);
-      tempCtx.stroke();
-    });
-    tempCtx.globalAlpha = 1;
+          const receivedPower = ap.power - effectiveLoss;
+          if (receivedPower > bestSignal) {
+            bestSignal = receivedPower;
+          }
+        }
 
-    // Reset composite operation to draw the result to main canvas
-    tempCtx.globalCompositeOperation = 'source-over';
+        const clamped = clamp((bestSignal - minVal) / (maxVal - minVal), 0, 1);
+        const [r, g, b] = palette[colorScale](clamped);
+        const alpha = bestSignal < coverageThreshold ? 90 : 200;
+        const idx = (y * width + x) * 4;
+        data[idx] = r;
+        data[idx + 1] = g;
+        data[idx + 2] = b;
+        data[idx + 3] = alpha;
 
-    // Copy temp to main
-    ctx.drawImage(tempCanvas, 0, 0);
+        offData[idx] = r;
+        offData[idx + 1] = g;
+        offData[idx + 2] = b;
+        offData[idx + 3] = alpha;
+      }
+    }
 
-  }, [aps, walls, width, height, show]);
+    ctx.putImageData(imageData, 0, 0);
+    offCtx.putImageData(offImage, 0, 0);
+    setHeatmapVersion(v => v + 1);
+  }, [aps, wallSegments, width, height, show, colorScale, minDbm, maxDbm, coverageThreshold]);
+
+  const heatmapTexture = useMemo(() => {
+    if (!offscreenRef.current) return null;
+    const texture = new CanvasTexture(offscreenRef.current);
+    texture.needsUpdate = true;
+    return texture;
+  }, [heatmapVersion]);
+
+  useEffect(() => {
+    return () => {
+      heatmapTexture?.dispose();
+    };
+  }, [heatmapTexture]);
 
   if (!show) return null;
 
