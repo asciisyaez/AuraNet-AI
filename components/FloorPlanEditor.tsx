@@ -92,9 +92,9 @@ const FloorPlanEditor: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const allowedTypes = ['image/png', 'image/jpeg', 'image/svg+xml'];
+    const allowedTypes = ['image/png', 'image/jpeg'];
     if (!allowedTypes.includes(file.type)) {
-      alert('Please upload a PNG, JPEG, or SVG file.');
+      alert('Please upload a PNG or JPEG file.');
       return;
     }
 
@@ -211,11 +211,11 @@ const FloorPlanEditor: React.FC = () => {
         <div>
           <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Floor Plan</h3>
           <div className="space-y-3 text-sm text-slate-700">
-            <label className="block text-xs font-semibold text-slate-600">Upload (PNG/JPEG/SVG)</label>
+            <label className="block text-xs font-semibold text-slate-600">Upload (PNG/JPEG)</label>
             <label className="flex items-center gap-2 px-3 py-2 border border-dashed border-slate-300 rounded-md bg-slate-50 cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors">
               <Image size={16} className="text-slate-500" />
               <span className="text-xs text-slate-600">Choose file</span>
-              <input type="file" accept="image/png,image/jpeg,image/svg+xml" className="hidden" onChange={handleImageUpload} />
+              <input type="file" accept="image/png,image/jpeg" className="hidden" onChange={handleImageUpload} />
             </label>
 
             <div className="flex items-center justify-between">
