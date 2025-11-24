@@ -2,8 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { AccessPoint, Wall } from '../types';
 import { INITIAL_APS, INITIAL_WALLS, HARDWARE_TOOLS, ENV_TOOLS } from '../constants';
 import HeatmapCanvas from './HeatmapCanvas';
-import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info } from 'lucide-react';
+import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info, Image, Eye, EyeOff, Ruler } from 'lucide-react';
 import { getOptimizationSuggestions } from '../services/geminiService';
+import { useScale } from './ScaleContext';
 
 const FloorPlanEditor: React.FC = () => {
   const [aps, setAps] = useState<AccessPoint[]>(INITIAL_APS);
@@ -12,6 +13,18 @@ const FloorPlanEditor: React.FC = () => {
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
+  const { scaleFactor, setScaleFactor } = useScale();
+
+  type Point = { x: number; y: number };
+
+  const [floorPlanImage, setFloorPlanImage] = useState<string | null>(null);
+  const [imageOpacity, setImageOpacity] = useState(0.6);
+  const [showImageLayer, setShowImageLayer] = useState(true);
+  const [isCalibrating, setIsCalibrating] = useState(false);
+  const [calibrationStart, setCalibrationStart] = useState<Point | null>(null);
+  const [calibrationEnd, setCalibrationEnd] = useState<Point | null>(null);
+  const [pixelLength, setPixelLength] = useState<number | null>(null);
+  const [realLengthInput, setRealLengthInput] = useState('');
 
   // Dragging state
   const [isDragging, setIsDragging] = useState(false);
@@ -50,6 +63,65 @@ const FloorPlanEditor: React.FC = () => {
 
   const handleMouseUp = () => {
     setIsDragging(false);
+  };
+
+  const getRelativePosition = (e: React.MouseEvent): Point | null => {
+    if (!editorRef.current) return null;
+    const rect = editorRef.current.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  const handleCanvasClick = (e: React.MouseEvent) => {
+    if (!isCalibrating) return;
+    const point = getRelativePosition(e);
+    if (!point) return;
+
+    if (!calibrationStart) {
+      setCalibrationStart(point);
+      setCalibrationEnd(null);
+      setPixelLength(null);
+    } else {
+      setCalibrationEnd(point);
+      const distance = Math.hypot(point.x - calibrationStart.x, point.y - calibrationStart.y);
+      setPixelLength(distance);
+      setIsCalibrating(false);
+    }
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/svg+xml'];
+    if (!allowedTypes.includes(file.type)) {
+      alert('Please upload a PNG, JPEG, or SVG file.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setFloorPlanImage(reader.result);
+        setShowImageLayer(true);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  useEffect(() => {
+    if (isCalibrating) {
+      setCalibrationStart(null);
+      setCalibrationEnd(null);
+      setPixelLength(null);
+    }
+  }, [isCalibrating]);
+
+  const applyCalibration = () => {
+    if (!pixelLength) return;
+    const realLength = parseFloat(realLengthInput);
+    if (Number.isNaN(realLength) || realLength <= 0) return;
+
+    setScaleFactor(realLength / pixelLength);
   };
 
   const addAp = () => {
@@ -121,8 +193,8 @@ const FloorPlanEditor: React.FC = () => {
               <span>Floor Plan</span>
             </label>
             <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
-              <input 
-                type="checkbox" 
+              <input
+                type="checkbox"
                 className="rounded text-blue-600 focus:ring-blue-500"
                 checked={showHeatmap}
                 onChange={(e) => setShowHeatmap(e.target.checked)}
@@ -135,7 +207,88 @@ const FloorPlanEditor: React.FC = () => {
             </label>
           </div>
         </div>
-        
+
+        <div>
+          <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Floor Plan</h3>
+          <div className="space-y-3 text-sm text-slate-700">
+            <label className="block text-xs font-semibold text-slate-600">Upload (PNG/JPEG/SVG)</label>
+            <label className="flex items-center gap-2 px-3 py-2 border border-dashed border-slate-300 rounded-md bg-slate-50 cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors">
+              <Image size={16} className="text-slate-500" />
+              <span className="text-xs text-slate-600">Choose file</span>
+              <input type="file" accept="image/png,image/jpeg,image/svg+xml" className="hidden" onChange={handleImageUpload} />
+            </label>
+
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm text-slate-700">
+                {showImageLayer ? <Eye size={14} className="text-blue-600" /> : <EyeOff size={14} className="text-slate-400" />}
+                <span>Show floor plan</span>
+              </div>
+              <input
+                type="checkbox"
+                className="rounded text-blue-600 focus:ring-blue-500"
+                checked={showImageLayer}
+                onChange={(e) => setShowImageLayer(e.target.checked)}
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between text-xs text-slate-600 mb-1">
+                <span>Opacity</span>
+                <span>{Math.round(imageOpacity * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min={0.1}
+                max={1}
+                step={0.05}
+                value={imageOpacity}
+                onChange={(e) => setImageOpacity(parseFloat(e.target.value))}
+                className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Calibration</h3>
+          <p className="text-xs text-slate-600 leading-snug mb-2">
+            Draw a reference line on the canvas and enter its real-world length to calibrate measurements.
+          </p>
+          <button
+            onClick={() => setIsCalibrating(!isCalibrating)}
+            className={`w-full flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-md border transition-colors ${isCalibrating ? 'border-blue-500 text-blue-700 bg-blue-50' : 'border-slate-200 text-slate-700 hover:border-blue-400 hover:bg-blue-50'}`}
+          >
+            <Ruler size={16} /> {isCalibrating ? 'Click two points...' : 'Start calibration'}
+          </button>
+          {pixelLength && (
+            <div className="mt-2 text-xs text-slate-600">
+              Pixel distance: <span className="font-semibold text-slate-800">{pixelLength.toFixed(1)} px</span>
+            </div>
+          )}
+          <div className="mt-3 space-y-2">
+            <label className="text-xs font-semibold text-slate-600">Reference length (meters)</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                value={realLengthInput}
+                onChange={(e) => setRealLengthInput(e.target.value)}
+                placeholder="e.g. 10"
+                className="flex-1 px-3 py-2 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-100 focus:outline-none"
+              />
+              <button
+                onClick={applyCalibration}
+                disabled={!pixelLength}
+                className="px-3 py-2 text-sm bg-blue-600 text-white rounded-md disabled:opacity-50"
+              >
+                Set
+              </button>
+            </div>
+            <div className="text-xs text-slate-500">
+              Current scale: <span className="font-semibold text-slate-800">{scaleFactor.toFixed(3)}</span> units per pixel
+            </div>
+          </div>
+        </div>
+
         <div className="mt-auto">
              <div className="mb-2">
                 <label className="text-xs font-semibold text-slate-600">Signal Threshold (-65dBm)</label>
@@ -173,22 +326,53 @@ const FloorPlanEditor: React.FC = () => {
         )}
 
         {/* Canvas Container */}
-        <div 
+        <div
           ref={editorRef}
           className="bg-white shadow-lg rounded-sm w-[800px] h-[600px] mx-auto relative select-none cursor-crosshair border border-slate-300"
           onMouseMove={handleMouseMove}
+          onClick={handleCanvasClick}
         >
           {/* Grid Background */}
           <div className="absolute inset-0 z-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#64748b 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
 
+          {/* Floor Plan Image */}
+          {floorPlanImage && showImageLayer && (
+            <img
+              src={floorPlanImage}
+              alt="Floor plan"
+              className="absolute inset-0 w-full h-full object-contain z-[1] pointer-events-none"
+              style={{ opacity: imageOpacity }}
+            />
+          )}
+
           {/* Heatmap Layer */}
-          <HeatmapCanvas 
-             aps={aps} 
-             walls={walls} 
-             width={800} 
-             height={600} 
-             show={showHeatmap} 
+          <HeatmapCanvas
+             aps={aps}
+             walls={walls}
+             width={800}
+             height={600}
+             show={showHeatmap}
           />
+
+          {isCalibrating && (
+            <div className="absolute top-3 left-3 z-30 bg-blue-600 text-white text-xs px-3 py-1 rounded-full shadow-sm">
+              Calibration: click two points to measure
+            </div>
+          )}
+
+          {(calibrationStart || calibrationEnd) && (
+            <svg className="absolute inset-0 z-30 pointer-events-none" width={800} height={600} viewBox="0 0 800 600">
+              {calibrationStart && (
+                <circle cx={calibrationStart.x} cy={calibrationStart.y} r={5} fill="#2563eb" opacity={0.9} />
+              )}
+              {calibrationStart && calibrationEnd && (
+                <>
+                  <line x1={calibrationStart.x} y1={calibrationStart.y} x2={calibrationEnd.x} y2={calibrationEnd.y} stroke="#2563eb" strokeWidth={3} strokeDasharray="6 4" />
+                  <circle cx={calibrationEnd.x} cy={calibrationEnd.y} r={5} fill="#2563eb" opacity={0.9} />
+                </>
+              )}
+            </svg>
+          )}
 
           {/* Walls */}
           {walls.map(wall => (

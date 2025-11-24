@@ -3,6 +3,7 @@ import { Layout, Folder, Users, Settings, Bell, Search, Menu, LogOut, LayoutGrid
 import ProjectList from './components/ProjectList';
 import FloorPlanEditor from './components/FloorPlanEditor';
 import RoamingSimulator from './components/RoamingSimulator';
+import { ScaleProvider } from './components/ScaleContext';
 
 // Basic SVG Logo
 const Logo = () => (
@@ -36,7 +37,8 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden">
+    <ScaleProvider>
+      <div className="flex h-screen bg-slate-50 overflow-hidden">
       {/* Sidebar */}
       <aside className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-white border-r border-slate-200 flex flex-col transition-all duration-300 z-20`}>
         <div className="h-16 flex items-center px-6 border-b border-slate-100">
@@ -125,7 +127,8 @@ const App: React.FC = () => {
            )}
         </div>
       </main>
-    </div>
+      </div>
+    </ScaleProvider>
   );
 };
 

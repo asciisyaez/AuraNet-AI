@@ -79,11 +79,11 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
   if (!show) return null;
 
   return (
-    <canvas 
-      ref={canvasRef} 
-      width={width} 
-      height={height} 
-      className="absolute top-0 left-0 pointer-events-none z-0 opacity-70"
+    <canvas
+      ref={canvasRef}
+      width={width}
+      height={height}
+      className="absolute top-0 left-0 pointer-events-none z-[2] opacity-70"
     />
   );
 };
