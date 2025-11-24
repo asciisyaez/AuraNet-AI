@@ -1,9 +1,105 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { AccessPoint, Wall } from '../types';
 import { INITIAL_APS, INITIAL_WALLS, HARDWARE_TOOLS, ENV_TOOLS } from '../constants';
 import HeatmapCanvas from './HeatmapCanvas';
 import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info } from 'lucide-react';
 import { getOptimizationSuggestions } from '../services/geminiService';
+import { ANTENNA_PATTERNS, AP_LIBRARY, CHANNEL_OPTIONS } from '../data/apLibrary';
+
+const CANVAS_WIDTH = 800;
+const CANVAS_HEIGHT = 600;
+const COVERAGE_TARGET_DBM = -65;
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
+
+const segmentsIntersect = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number) => {
+  const det = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx);
+  if (det === 0) return false;
+  const lambda = ((dy - cy) * (dx - ax) + (cx - dx) * (dy - ay)) / det;
+  const gamma = ((ay - cy) * (dx - ax) + (cx - ax) * (dy - ay)) / det;
+  return lambda > 0 && lambda < 1 && gamma > 0 && gamma < 1;
+};
+
+const calculateSignal = (ap: AccessPoint, x: number, y: number, walls: Wall[]) => {
+  const horizontalDistance = Math.hypot(ap.x - x, ap.y - y);
+  const distance = Math.hypot(horizontalDistance, ap.height);
+  const pathLoss = 20 * Math.log10(distance + 1);
+  const wallLoss = walls.reduce((loss, wall) => {
+    const intersects = segmentsIntersect(ap.x, ap.y, x, y, wall.x1, wall.y1, wall.x2, wall.y2);
+    return loss + (intersects ? wall.attenuation : 0);
+  }, 0);
+  return ap.power + ap.antennaGain - pathLoss - wallLoss;
+};
+
+const evaluateCoverage = (aps: AccessPoint[], walls: Wall[], target: number = COVERAGE_TARGET_DBM) => {
+  const gridSpacing = 60;
+  const gridPoints: { x: number; y: number }[] = [];
+  for (let x = gridSpacing; x < CANVAS_WIDTH; x += gridSpacing) {
+    for (let y = gridSpacing; y < CANVAS_HEIGHT; y += gridSpacing) {
+      gridPoints.push({ x, y });
+    }
+  }
+
+  let covered = 0;
+  let bestSignals: number[] = [];
+
+  gridPoints.forEach(point => {
+    const bestSignal = Math.max(
+      ...aps.map(ap => calculateSignal(ap, point.x, point.y, walls))
+    );
+    bestSignals.push(bestSignal);
+    if (bestSignal >= target) covered += 1;
+  });
+
+  const coveragePercent = (covered / gridPoints.length) * 100;
+  const averageSignal = bestSignals.reduce((a, b) => a + b, 0) / bestSignals.length;
+  const imbalancePenalty = aps.reduce((penalty, ap, idx) => {
+    return aps.slice(idx + 1).reduce((inner, other) => {
+      const distance = Math.hypot(ap.x - other.x, ap.y - other.y);
+      return inner + (distance < 120 ? (120 - distance) * 0.5 : 0);
+    }, penalty);
+  }, 0);
+
+  // Lower is better
+  const score = (100 - coveragePercent) * 5 + (target - averageSignal) * 0.5 + imbalancePenalty;
+
+  return { coveragePercent, averageSignal, score };
+};
+
+const runSimulatedAnnealing = (aps: AccessPoint[], walls: Wall[], target: number) => {
+  let current = aps.map(ap => ({ ...ap }));
+  let best = current.map(ap => ({ ...ap }));
+  let { score: bestScore } = evaluateCoverage(best, walls, target);
+  let { score: currentScore } = evaluateCoverage(current, walls, target);
+
+  const iterations = 250;
+  for (let i = 0; i < iterations; i++) {
+    const temperature = 1 - i / iterations;
+    const candidate = current.map(ap => ({ ...ap }));
+    const apIndex = Math.floor(Math.random() * candidate.length);
+    const jitter = Math.max(10, 120 * temperature);
+    const deltaX = (Math.random() - 0.5) * jitter;
+    const deltaY = (Math.random() - 0.5) * jitter;
+
+    candidate[apIndex].x = clamp(candidate[apIndex].x + deltaX, 40, CANVAS_WIDTH - 40);
+    candidate[apIndex].y = clamp(candidate[apIndex].y + deltaY, 40, CANVAS_HEIGHT - 40);
+
+    const { score: candidateScore } = evaluateCoverage(candidate, walls, target);
+    const acceptance = Math.exp((currentScore - candidateScore) / Math.max(temperature, 0.01));
+    if (candidateScore < currentScore || Math.random() < acceptance) {
+      current = candidate;
+      currentScore = candidateScore;
+    }
+
+    if (candidateScore < bestScore) {
+      best = candidate.map(ap => ({ ...ap }));
+      bestScore = candidateScore;
+    }
+  }
+
+  const bestMetrics = evaluateCoverage(best, walls, target);
+  return { bestAps: best, metrics: bestMetrics };
+};
 
 const FloorPlanEditor: React.FC = () => {
   const [aps, setAps] = useState<AccessPoint[]>(INITIAL_APS);
@@ -12,11 +108,17 @@ const FloorPlanEditor: React.FC = () => {
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
+  const [signalThreshold, setSignalThreshold] = useState(COVERAGE_TARGET_DBM);
 
   // Dragging state
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
   const editorRef = useRef<HTMLDivElement>(null);
+
+  const updateSelectedAp = (updates: Partial<AccessPoint>) => {
+    if (!selectedApId) return;
+    setAps(prev => prev.map(ap => ap.id === selectedApId ? { ...ap, ...updates } : ap));
+  };
 
   const handleMouseDown = (e: React.MouseEvent, id: string, type: 'ap') => {
     e.stopPropagation();
@@ -53,13 +155,20 @@ const FloorPlanEditor: React.FC = () => {
   };
 
   const addAp = () => {
+    const template = AP_LIBRARY[0];
     const newAp: AccessPoint = {
       id: `AP-${Date.now().toString().slice(-4)}`,
       x: 350,
       y: 250,
-      model: 'Wi-Fi 6E Omni',
-      power: 20,
+      model: template.name,
+      band: template.bands[0],
+      power: template.defaultPower,
       channel: 'Auto',
+      height: template.defaultHeight,
+      azimuth: template.defaultAzimuth ?? 0,
+      tilt: template.defaultTilt ?? 0,
+      antennaGain: template.antennaGain,
+      antennaPatternFile: template.patternFile,
       color: '#3b82f6'
     };
     setAps([...aps, newAp]);
@@ -75,9 +184,21 @@ const FloorPlanEditor: React.FC = () => {
 
   const runOptimization = async () => {
     setIsOptimizing(true);
-    setAiSuggestion(null);
-    const result = await getOptimizationSuggestions(aps, walls);
-    setAiSuggestion(result);
+    setAiSuggestion('Evaluating layout with simulated annealing...');
+
+    const before = evaluateCoverage(aps, walls, signalThreshold);
+    const { bestAps, metrics } = runSimulatedAnnealing(aps, walls, signalThreshold);
+    setAps(bestAps);
+
+    let insight = `AI placement updated AP coordinates for stronger coverage.\n` +
+      `Coverage >= ${signalThreshold} dBm: ${before.coveragePercent.toFixed(1)}% → ${metrics.coveragePercent.toFixed(1)}%.`;
+
+    const text = await getOptimizationSuggestions(bestAps, walls);
+    if (!text.includes('API Key not configured')) {
+      insight += `\n\nGemini notes:\n${text}`;
+    }
+
+    setAiSuggestion(insight);
     setIsOptimizing(false);
   };
 
@@ -138,10 +259,18 @@ const FloorPlanEditor: React.FC = () => {
         
         <div className="mt-auto">
              <div className="mb-2">
-                <label className="text-xs font-semibold text-slate-600">Signal Threshold (-65dBm)</label>
-                <input type="range" className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer mt-2" />
+                <label className="text-xs font-semibold text-slate-600">Signal Threshold ({signalThreshold}dBm)</label>
+                <input
+                  type="range"
+                  min="-90"
+                  max="-40"
+                  step="1"
+                  value={signalThreshold}
+                  onChange={(e) => setSignalThreshold(Number(e.target.value))}
+                  className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer mt-2"
+                />
              </div>
-             <button 
+             <button
               onClick={runOptimization}
               disabled={isOptimizing}
               className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium flex items-center justify-center gap-2 transition-all">
@@ -255,24 +384,177 @@ const FloorPlanEditor: React.FC = () => {
                  <h4 className="font-semibold text-sm text-slate-800">Properties</h4>
                  <button onClick={() => setSelectedApId(null)} className="text-slate-400 hover:text-slate-600">×</button>
               </div>
-              <div className="p-4 space-y-3">
-                 <div className="grid grid-cols-2 gap-y-2 text-sm">
-                    <span className="text-slate-500">ID</span>
-                    <span className="text-slate-800 font-mono text-right">{selectedAp.id}</span>
-                    
-                    <span className="text-slate-500">Model</span>
-                    <span className="text-slate-800 text-right">{selectedAp.model}</span>
-                    
-                    <span className="text-slate-500">Power</span>
-                    <div className="flex items-center justify-end gap-2">
-                         <span className="text-slate-800">{selectedAp.power} dBm</span>
+              <div className="p-4 space-y-4 text-sm">
+                 <div className="flex items-center justify-between">
+                   <span className="text-slate-500">ID</span>
+                   <span className="text-slate-800 font-mono">{selectedAp.id}</span>
+                 </div>
+
+                 <div className="space-y-1">
+                    <label className="text-xs text-slate-500">Model</label>
+                    <select
+                      className="w-full border border-slate-200 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      value={selectedAp.model}
+                      onChange={(e) => {
+                        const model = AP_LIBRARY.find(m => m.name === e.target.value);
+                        if (model) {
+                          updateSelectedAp({
+                            model: model.name,
+                            band: model.bands[0],
+                            power: model.defaultPower,
+                            height: model.defaultHeight,
+                            azimuth: model.defaultAzimuth ?? 0,
+                            tilt: model.defaultTilt ?? 0,
+                            antennaGain: model.antennaGain,
+                            antennaPatternFile: model.patternFile
+                          });
+                        }
+                      }}
+                    >
+                      {AP_LIBRARY.map(model => (
+                        <option key={model.id} value={model.name}>{model.name} · {model.vendor}</option>
+                      ))}
+                    </select>
+                    {selectedAp.antennaPatternFile && (
+                      <p className="text-[11px] text-slate-500">Pattern: {selectedAp.antennaPatternFile}</p>
+                    )}
+                 </div>
+
+                 <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs text-slate-500">Band</label>
+                      <select
+                        className="w-full border border-slate-200 rounded-md px-2 py-1"
+                        value={selectedAp.band}
+                        onChange={(e) => updateSelectedAp({ band: e.target.value as AccessPoint['band'] })}
+                      >
+                        {['2.4GHz', '5GHz', '6GHz'].map(b => (
+                          <option key={b} value={b}>{b}</option>
+                        ))}
+                      </select>
                     </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-slate-500">Channel</label>
+                      <select
+                        className="w-full border border-slate-200 rounded-md px-2 py-1"
+                        value={selectedAp.channel}
+                        onChange={(e) => {
+                          const val = e.target.value === 'Auto' ? 'Auto' : Number(e.target.value);
+                          updateSelectedAp({ channel: val as AccessPoint['channel'] });
+                        }}
+                      >
+                        {CHANNEL_OPTIONS.map(ch => (
+                          <option key={ch} value={ch}>{ch}</option>
+                        ))}
+                      </select>
+                    </div>
+                 </div>
 
-                    <span className="text-slate-500">Channel</span>
-                    <span className="text-slate-800 text-right">{selectedAp.channel}</span>
+                 <div className="grid grid-cols-2 gap-3">
+                   <div className="space-y-1">
+                     <label className="text-xs text-slate-500">Power (dBm)</label>
+                     <input
+                       type="range"
+                       min="5"
+                       max="30"
+                       value={selectedAp.power}
+                       onChange={(e) => updateSelectedAp({ power: Number(e.target.value) })}
+                       className="w-full"
+                     />
+                     <div className="text-right text-[11px] text-slate-500">{selectedAp.power} dBm</div>
+                   </div>
+                   <div className="space-y-1">
+                     <label className="text-xs text-slate-500">Height (m)</label>
+                     <input
+                       type="number"
+                       value={selectedAp.height}
+                       min={1}
+                       max={8}
+                       step={0.1}
+                       onChange={(e) => updateSelectedAp({ height: Number(e.target.value) })}
+                       className="w-full border border-slate-200 rounded-md px-2 py-1"
+                     />
+                   </div>
+                 </div>
 
-                    <span className="text-slate-500">Clients</span>
-                    <span className="text-slate-800 text-right">0</span>
+                 <div className="grid grid-cols-2 gap-3">
+                   <div className="space-y-1">
+                     <label className="text-xs text-slate-500">Azimuth (°)</label>
+                     <input
+                       type="range"
+                       min="-180"
+                       max="180"
+                       value={selectedAp.azimuth}
+                       onChange={(e) => updateSelectedAp({ azimuth: Number(e.target.value) })}
+                       className="w-full"
+                     />
+                     <div className="text-right text-[11px] text-slate-500">{selectedAp.azimuth}°</div>
+                   </div>
+                   <div className="space-y-1">
+                     <label className="text-xs text-slate-500">Tilt (°)</label>
+                     <input
+                       type="range"
+                       min="-30"
+                       max="30"
+                       value={selectedAp.tilt}
+                       onChange={(e) => updateSelectedAp({ tilt: Number(e.target.value) })}
+                       className="w-full"
+                     />
+                     <div className="text-right text-[11px] text-slate-500">{selectedAp.tilt}°</div>
+                   </div>
+                 </div>
+
+                 <div className="space-y-1">
+                   <label className="text-xs text-slate-500">Antenna gain / pattern</label>
+                   <div className="grid grid-cols-2 gap-2">
+                     <input
+                       type="number"
+                       value={selectedAp.antennaGain}
+                       min={0}
+                       max={20}
+                       step={0.5}
+                       onChange={(e) => updateSelectedAp({ antennaGain: Number(e.target.value) })}
+                       className="w-full border border-slate-200 rounded-md px-2 py-1"
+                     />
+                     <select
+                       className="w-full border border-slate-200 rounded-md px-2 py-1"
+                       value={selectedAp.antennaPatternFile ?? ''}
+                       onChange={(e) => {
+                         const pattern = ANTENNA_PATTERNS.find(p => p.file === e.target.value);
+                         updateSelectedAp({
+                           antennaPatternFile: e.target.value || undefined,
+                           antennaGain: pattern ? pattern.gain : selectedAp.antennaGain
+                         });
+                       }}
+                     >
+                       <option value="">Custom</option>
+                       {ANTENNA_PATTERNS.map(pattern => (
+                         <option key={pattern.file} value={pattern.file}>{pattern.label}</option>
+                       ))}
+                     </select>
+                   </div>
+                   <input
+                     type="file"
+                     accept=".ant,.msi,.json,.csv"
+                     onChange={(e) => {
+                       const file = e.target.files?.[0];
+                       if (file) {
+                         updateSelectedAp({ antennaPatternFile: file.name });
+                       }
+                     }}
+                     className="w-full text-[11px] text-slate-500"
+                   />
+                 </div>
+
+                 <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-500 space-y-1">
+                   <div className="flex items-center justify-between">
+                     <span>Band</span>
+                     <span className="font-medium text-slate-700">{selectedAp.band}</span>
+                   </div>
+                   <div className="flex items-center justify-between">
+                     <span>Channel</span>
+                     <span className="font-medium text-slate-700">{selectedAp.channel}</span>
+                   </div>
                  </div>
               </div>
            </div>

@@ -14,9 +14,51 @@ export const MOCK_USERS: UserProfile[] = [
 ];
 
 export const INITIAL_APS: AccessPoint[] = [
-  { id: 'AP-01', x: 200, y: 150, model: 'Wi-Fi 6E Omni', power: 20, channel: 'Auto', color: '#3b82f6' },
-  { id: 'AP-02', x: 600, y: 150, model: 'Wi-Fi 6E Omni', power: 20, channel: 6, color: '#3b82f6' },
-  { id: 'AP-03', x: 400, y: 400, model: 'High Density', power: 18, channel: 11, color: '#f59e0b' },
+  {
+    id: 'AP-01',
+    x: 200,
+    y: 150,
+    model: 'Wi-Fi 6E Omni',
+    band: '6GHz',
+    power: 20,
+    channel: 'Auto',
+    height: 2.7,
+    azimuth: 0,
+    tilt: 0,
+    antennaGain: 5,
+    antennaPatternFile: 'omni_90deg.ant',
+    color: '#3b82f6'
+  },
+  {
+    id: 'AP-02',
+    x: 600,
+    y: 150,
+    model: 'Wi-Fi 6E Omni',
+    band: '5GHz',
+    power: 20,
+    channel: 36,
+    height: 2.7,
+    azimuth: 0,
+    tilt: 0,
+    antennaGain: 5,
+    antennaPatternFile: 'omni_90deg.ant',
+    color: '#3b82f6'
+  },
+  {
+    id: 'AP-03',
+    x: 400,
+    y: 400,
+    model: 'High Density Panel',
+    band: '5GHz',
+    power: 18,
+    channel: 149,
+    height: 2.5,
+    azimuth: 45,
+    tilt: -5,
+    antennaGain: 9,
+    antennaPatternFile: 'panel_65deg.ant',
+    color: '#f59e0b'
+  },
 ];
 
 export const INITIAL_WALLS: Wall[] = [

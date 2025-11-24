@@ -12,9 +12,29 @@ export interface AccessPoint {
   x: number;
   y: number;
   model: string;
+  band: '2.4GHz' | '5GHz' | '6GHz';
   power: number; // dBm
   channel: number | 'Auto';
+  height: number; // meters
+  azimuth: number; // degrees
+  tilt: number; // degrees
+  antennaGain: number; // dBi
+  antennaPatternFile?: string;
   color: string;
+}
+
+export interface AccessPointModel {
+  id: string;
+  name: string;
+  vendor: string;
+  bands: ('2.4GHz' | '5GHz' | '6GHz')[];
+  defaultPower: number;
+  defaultHeight: number;
+  antennaGain: number;
+  defaultAzimuth?: number;
+  defaultTilt?: number;
+  patternFile?: string;
+  notes?: string;
 }
 
 export interface Wall {
