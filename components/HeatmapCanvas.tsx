@@ -56,17 +56,17 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
     // Simple wall attenuation simulation (visual only)
     // We just draw semi-transparent lines over the heatmap to show "blocking"
     tempCtx.globalCompositeOperation = 'destination-out';
-    tempCtx.lineWidth = 8;
     tempCtx.lineCap = 'round';
-    
+
     walls.forEach(wall => {
       tempCtx.beginPath();
       tempCtx.moveTo(wall.x1, wall.y1);
       tempCtx.lineTo(wall.x2, wall.y2);
-      // Heavier cut for Concrete
-      tempCtx.lineWidth = wall.type === 'Concrete' ? 12 : 6; 
+      tempCtx.lineWidth = Math.max(wall.thickness, 6);
+      tempCtx.globalAlpha = Math.min(0.9, 0.25 + wall.attenuation / 18);
       tempCtx.stroke();
     });
+    tempCtx.globalAlpha = 1;
 
     // Reset composite operation to draw the result to main canvas
     tempCtx.globalCompositeOperation = 'source-over';
