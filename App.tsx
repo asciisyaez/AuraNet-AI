@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Layout, Folder, Users, Settings, Bell, Search, Menu, LogOut, LayoutGrid } from 'lucide-react';
 import ProjectList from './components/ProjectList';
 import FloorPlanEditor from './components/FloorPlanEditor';
 import RoamingSimulator from './components/RoamingSimulator';
+import { useProjectStore } from './services/projectStore';
 
 // Basic SVG Logo
 const Logo = () => (
@@ -21,9 +22,15 @@ type View = 'dashboard' | 'projects' | 'editor' | 'users' | 'settings';
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<View>('projects');
   const [isSidebarOpen, setSidebarOpen] = useState(true);
+  const projectCount = useProjectStore((state) => state.projects.length);
+  const loadProjects = useProjectStore((state) => state.loadFromStorage);
+
+  useEffect(() => {
+    loadProjects();
+  }, [loadProjects]);
 
   const NavItem = ({ view, icon: Icon, label, badge }: { view: View, icon: any, label: string, badge?: number }) => (
-    <button 
+    <button
       onClick={() => setCurrentView(view)}
       className={`flex items-center justify-between w-full px-4 py-2.5 mb-1 rounded-md text-sm font-medium transition-colors ${currentView === view ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
     >
@@ -31,7 +38,7 @@ const App: React.FC = () => {
         <Icon size={18} />
         {isSidebarOpen && <span>{label}</span>}
       </div>
-      {isSidebarOpen && badge && <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full">{badge}</span>}
+      {isSidebarOpen && badge !== undefined && <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full">{badge}</span>}
     </button>
   );
 
@@ -42,15 +49,15 @@ const App: React.FC = () => {
         <div className="h-16 flex items-center px-6 border-b border-slate-100">
            {isSidebarOpen ? <Logo /> : <div className="text-blue-600 font-bold">AN</div>}
         </div>
-        
+
         <div className="flex-1 py-6 px-3 overflow-y-auto">
           <div className="mb-8">
             <h3 className={`px-4 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 ${!isSidebarOpen && 'hidden'}`}>Main</h3>
             <NavItem view="dashboard" icon={LayoutGrid} label="Dashboard" />
-            <NavItem view="projects" icon={Folder} label="Projects" badge={3} />
+            <NavItem view="projects" icon={Folder} label="Projects" badge={projectCount} />
             <NavItem view="editor" icon={Layout} label="Floor Plans" />
           </div>
-          
+
           <div className="mb-8">
              <h3 className={`px-4 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 ${!isSidebarOpen && 'hidden'}`}>Organization</h3>
              <NavItem view="users" icon={Users} label="Users" />
@@ -75,8 +82,8 @@ const App: React.FC = () => {
                  <Menu size={20}/>
               </button>
               <h1 className="text-lg font-semibold text-slate-800">
-                 {currentView === 'projects' ? 'Project Management' : 
-                  currentView === 'editor' ? 'Floor Plan Editor' : 
+                 {currentView === 'projects' ? 'Project Management' :
+                  currentView === 'editor' ? 'Floor Plan Editor' :
                   currentView.charAt(0).toUpperCase() + currentView.slice(1)}
               </h1>
            </div>

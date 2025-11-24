@@ -1,10 +1,53 @@
-import { Project, UserProfile, AccessPoint, Wall } from './types';
+import { Project, UserProfile, AccessPoint, Wall, GlobalSettings } from './types';
 
-export const MOCK_PROJECTS: Project[] = [
-  { id: '1', name: 'San Francisco HQ - Floor 1', status: 'Draft', optimizationStatus: 'Pending', lastModified: 'Oct 26, 2023', floorCount: 1 },
-  { id: '2', name: 'Warehouse Expansion P1', status: 'Active', optimizationStatus: 'Optimized', lastModified: 'Oct 24, 2023', floorCount: 1 },
-  { id: '3', name: 'Lobby Wi-Fi Upgrade', status: 'Archived', optimizationStatus: '-', lastModified: 'Sep 15, 2023', floorCount: 1 },
-  { id: '4', name: 'Meeting Rooms Coverage', status: 'Active', optimizationStatus: 'Optimized', lastModified: 'Nov 01, 2023', floorCount: 1 },
+export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
+  units: 'metric',
+  defaultSignalProfiles: ['Data', 'Voice', 'Video'],
+};
+
+const baseSettings = (overrides: Partial<GlobalSettings> = {}): GlobalSettings => ({
+  ...DEFAULT_GLOBAL_SETTINGS,
+  ...overrides,
+  defaultSignalProfiles: overrides.defaultSignalProfiles ?? DEFAULT_GLOBAL_SETTINGS.defaultSignalProfiles,
+});
+
+export const DEFAULT_PROJECTS: Project[] = [
+  {
+    id: '1',
+    name: 'San Francisco HQ - Floor 1',
+    status: 'Draft',
+    optimizationStatus: 'Pending',
+    lastModified: 'Oct 26, 2023',
+    floorCount: 1,
+    settings: baseSettings(),
+  },
+  {
+    id: '2',
+    name: 'Warehouse Expansion P1',
+    status: 'Active',
+    optimizationStatus: 'Optimized',
+    lastModified: 'Oct 24, 2023',
+    floorCount: 1,
+    settings: baseSettings({ defaultSignalProfiles: ['Outdoor', 'IoT'] }),
+  },
+  {
+    id: '3',
+    name: 'Lobby Wi-Fi Upgrade',
+    status: 'Archived',
+    optimizationStatus: '-',
+    lastModified: 'Sep 15, 2023',
+    floorCount: 1,
+    settings: baseSettings({ units: 'imperial' }),
+  },
+  {
+    id: '4',
+    name: 'Meeting Rooms Coverage',
+    status: 'Active',
+    optimizationStatus: 'Optimized',
+    lastModified: 'Nov 01, 2023',
+    floorCount: 1,
+    settings: baseSettings({ defaultSignalProfiles: ['Voice', 'Collaboration'] }),
+  },
 ];
 
 export const MOCK_USERS: UserProfile[] = [

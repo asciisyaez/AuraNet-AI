@@ -1,3 +1,8 @@
+export interface GlobalSettings {
+  units: 'metric' | 'imperial';
+  defaultSignalProfiles: string[];
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -5,6 +10,12 @@ export interface Project {
   optimizationStatus: 'Pending' | 'Optimized' | '-';
   lastModified: string;
   floorCount: number;
+  settings: GlobalSettings;
+}
+
+export interface PersistedProjectData {
+  projects: Project[];
+  globalSettings: GlobalSettings;
 }
 
 export interface AccessPoint {
