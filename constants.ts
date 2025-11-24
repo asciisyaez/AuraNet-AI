@@ -21,14 +21,14 @@ export const INITIAL_APS: AccessPoint[] = [
 
 export const INITIAL_WALLS: Wall[] = [
   // Outer Box
-  { id: 'w1', x1: 50, y1: 50, x2: 750, y2: 50, type: 'Concrete', attenuation: 12 },
-  { id: 'w2', x1: 750, y1: 50, x2: 750, y2: 550, type: 'Concrete', attenuation: 12 },
-  { id: 'w3', x1: 750, y1: 550, x2: 50, y2: 550, type: 'Concrete', attenuation: 12 },
-  { id: 'w4', x1: 50, y1: 550, x2: 50, y2: 50, type: 'Concrete', attenuation: 12 },
+  { id: 'w1', x1: 50, y1: 50, x2: 750, y2: 50, material: 'Concrete', attenuation: 12, thickness: 12, height: 3, elevation: 0 },
+  { id: 'w2', x1: 750, y1: 50, x2: 750, y2: 550, material: 'Concrete', attenuation: 12, thickness: 12, height: 3, elevation: 0 },
+  { id: 'w3', x1: 750, y1: 550, x2: 50, y2: 550, material: 'Concrete', attenuation: 12, thickness: 12, height: 3, elevation: 0 },
+  { id: 'w4', x1: 50, y1: 550, x2: 50, y2: 50, material: 'Concrete', attenuation: 12, thickness: 12, height: 3, elevation: 0 },
   // Inner Rooms
-  { id: 'w5', x1: 50, y1: 250, x2: 300, y2: 250, type: 'Drywall', attenuation: 3 },
-  { id: 'w6', x1: 300, y1: 50, x2: 300, y2: 250, type: 'Glass', attenuation: 2 },
-  { id: 'w7', x1: 500, y1: 350, x2: 750, y2: 350, type: 'Drywall', attenuation: 3 },
+  { id: 'w5', x1: 50, y1: 250, x2: 300, y2: 250, material: 'Drywall', attenuation: 3, thickness: 8, height: 2.8, elevation: 0 },
+  { id: 'w6', x1: 300, y1: 50, x2: 300, y2: 250, material: 'Glass', attenuation: 2, thickness: 6, height: 2.8, elevation: 0 },
+  { id: 'w7', x1: 500, y1: 350, x2: 750, y2: 350, material: 'Drywall', attenuation: 3, thickness: 8, height: 2.8, elevation: 0 },
 ];
 
 export const HARDWARE_TOOLS = [
@@ -38,7 +38,8 @@ export const HARDWARE_TOOLS = [
 ];
 
 export const ENV_TOOLS = [
-  { id: 'e1', name: 'Wall', icon: 'Square', type: 'wall' },
-  { id: 'e2', name: 'Concrete', icon: 'BrickWall', type: 'wall' },
-  { id: 'e3', name: 'Window', icon: 'Maximize', type: 'wall' },
+  { id: 'brick', name: 'Brick', icon: 'Square', type: 'wall', material: 'Brick', attenuation: 14, thickness: 12, height: 3, elevation: 0, color: '#b45309' },
+  { id: 'drywall', name: 'Drywall', icon: 'Square', type: 'wall', material: 'Drywall', attenuation: 3, thickness: 8, height: 2.8, elevation: 0, color: '#94a3b8' },
+  { id: 'concrete', name: 'Concrete', icon: 'Square', type: 'wall', material: 'Concrete', attenuation: 12, thickness: 14, height: 3, elevation: 0, color: '#475569' },
+  { id: 'glass', name: 'Glass', icon: 'Square', type: 'wall', material: 'Glass', attenuation: 2, thickness: 6, height: 3, elevation: 0, color: '#38bdf8' },
 ];
