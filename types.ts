@@ -34,8 +34,15 @@ export interface Wall {
   y1: number;
   x2: number;
   y2: number;
-  type: 'Concrete' | 'Drywall' | 'Glass';
+  material: 'Brick' | 'Concrete' | 'Drywall' | 'Glass';
   attenuation: number; // dB loss
+  thickness: number; // px thickness for 2D view
+  height: number; // meters, used for future 3D rendering
+  elevation: number; // meters above ground
+  metadata?: {
+    pattern?: string;
+    color?: string;
+  };
 }
 
 export interface UserProfile {

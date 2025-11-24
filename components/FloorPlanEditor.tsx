@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { AccessPoint, Wall } from '../types';
 import { INITIAL_APS, INITIAL_WALLS, HARDWARE_TOOLS, ENV_TOOLS } from '../constants';
 import HeatmapCanvas from './HeatmapCanvas';
@@ -9,6 +9,22 @@ const FloorPlanEditor: React.FC = () => {
   const [aps, setAps] = useState<AccessPoint[]>(INITIAL_APS);
   const [walls, setWalls] = useState<Wall[]>(INITIAL_WALLS);
   const [selectedApId, setSelectedApId] = useState<string | null>(null);
+  const [activeEnvToolId, setActiveEnvToolId] = useState<string>(ENV_TOOLS[0]?.id ?? '');
+  const [wallAttributes, setWallAttributes] = useState<Wall>(() => ({
+    id: 'draft',
+    x1: 0,
+    y1: 0,
+    x2: 0,
+    y2: 0,
+    material: ENV_TOOLS[0]?.material ?? 'Drywall',
+    attenuation: ENV_TOOLS[0]?.attenuation ?? 3,
+    thickness: ENV_TOOLS[0]?.thickness ?? 8,
+    height: ENV_TOOLS[0]?.height ?? 3,
+    elevation: ENV_TOOLS[0]?.elevation ?? 0,
+    metadata: {
+      color: ENV_TOOLS[0]?.color ?? '#94a3b8'
+    }
+  }));
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
@@ -17,6 +33,7 @@ const FloorPlanEditor: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
   const editorRef = useRef<HTMLDivElement>(null);
+  const [draftWall, setDraftWall] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
   const handleMouseDown = (e: React.MouseEvent, id: string, type: 'ap') => {
     e.stopPropagation();
@@ -45,11 +62,42 @@ const FloorPlanEditor: React.FC = () => {
       const clampedY = Math.max(0, Math.min(newY, rect.height - 40));
 
       setAps(prev => prev.map(ap => ap.id === selectedApId ? { ...ap, x: clampedX, y: clampedY } : ap));
+    } else if (draftWall && editorRef.current) {
+      const rect = editorRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      setDraftWall(prev => prev ? { ...prev, x2: x, y2: y } : null);
     }
   };
 
   const handleMouseUp = () => {
     setIsDragging(false);
+    if (draftWall) {
+      const newWall: Wall = {
+        ...wallAttributes,
+        ...draftWall,
+        id: `W-${Date.now().toString().slice(-4)}`,
+        metadata: {
+          ...wallAttributes.metadata,
+        }
+      };
+
+      // Ignore tiny drags
+      const distance = Math.hypot(draftWall.x2 - draftWall.x1, draftWall.y2 - draftWall.y1);
+      if (distance > 4) {
+        setWalls(prev => [...prev, newWall]);
+      }
+      setDraftWall(null);
+    }
+  };
+
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    if (!editorRef.current || isDragging || !activeEnvToolId) return;
+    const rect = editorRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    setDraftWall({ x1: x, y1: y, x2: x, y2: y });
   };
 
   const addAp = () => {
@@ -83,6 +131,29 @@ const FloorPlanEditor: React.FC = () => {
 
   const selectedAp = aps.find(a => a.id === selectedApId);
 
+  const materialStyles: Record<Wall['material'], { color: string; pattern?: string; shadow?: string }> = {
+    Brick: {
+      color: '#b45309',
+      pattern: 'repeating-linear-gradient(0deg, rgba(255,255,255,0.2), rgba(255,255,255,0.2) 8px, transparent 8px, transparent 16px)',
+      shadow: '0 0 0 1px rgba(148, 82, 31, 0.35)'
+    },
+    Concrete: {
+      color: '#475569',
+      pattern: 'linear-gradient(135deg, rgba(255,255,255,0.12) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0.12) 75%, transparent 75%, transparent)',
+      shadow: '0 0 0 1px rgba(71, 85, 105, 0.35)'
+    },
+    Drywall: {
+      color: '#94a3b8',
+      pattern: 'linear-gradient(90deg, rgba(255,255,255,0.35) 1px, transparent 1px)',
+      shadow: '0 0 0 1px rgba(148, 163, 184, 0.4)'
+    },
+    Glass: {
+      color: '#38bdf8',
+      pattern: 'linear-gradient(135deg, rgba(255,255,255,0.35) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.35) 50%, rgba(255,255,255,0.35) 75%, transparent 75%, transparent)',
+      shadow: '0 0 0 1px rgba(56, 189, 248, 0.35)'
+    }
+  };
+
   return (
     <div className="flex h-full" onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
       {/* Left Toolbar */}
@@ -105,11 +176,74 @@ const FloorPlanEditor: React.FC = () => {
           <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Environment</h3>
           <div className="grid grid-cols-3 gap-2">
             {ENV_TOOLS.map(tool => (
-              <button key={tool.id} className="flex flex-col items-center justify-center p-2 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors text-slate-600">
-                <Square size={16} className="mb-1 text-slate-400" />
+              <button
+                key={tool.id}
+                onClick={() => {
+                  setActiveEnvToolId(tool.id);
+                  setWallAttributes(prev => ({
+                    ...prev,
+                    material: tool.material,
+                    attenuation: tool.attenuation,
+                    thickness: tool.thickness,
+                    height: tool.height,
+                    elevation: tool.elevation,
+                    metadata: {
+                      ...prev.metadata,
+                      color: tool.color
+                    }
+                  }));
+                }}
+                className={`flex flex-col items-center justify-center p-2 border rounded-lg transition-colors text-slate-600 ${activeEnvToolId === tool.id ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 hover:bg-slate-50'}`}
+              >
+                <Square size={16} className={`mb-1 ${activeEnvToolId === tool.id ? 'text-blue-500' : 'text-slate-400'}`} />
                 <span className="text-[10px] text-center">{tool.name}</span>
+                <span className="text-[10px] text-center text-slate-400">{tool.attenuation}dB</span>
               </button>
             ))}
+          </div>
+          <div className="mt-3 space-y-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
+            <div className="flex justify-between text-[11px] text-slate-600">
+              <span>Material</span>
+              <span className="font-semibold text-slate-800">{wallAttributes.material}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600">
+              <label className="flex flex-col gap-1">
+                <span>Attenuation (dB)</span>
+                <input
+                  type="number"
+                  className="border border-slate-200 rounded px-2 py-1 text-sm"
+                  value={wallAttributes.attenuation}
+                  onChange={e => setWallAttributes(prev => ({ ...prev, attenuation: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span>Thickness (px)</span>
+                <input
+                  type="number"
+                  className="border border-slate-200 rounded px-2 py-1 text-sm"
+                  value={wallAttributes.thickness}
+                  onChange={e => setWallAttributes(prev => ({ ...prev, thickness: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span>Height (m)</span>
+                <input
+                  type="number"
+                  className="border border-slate-200 rounded px-2 py-1 text-sm"
+                  value={wallAttributes.height}
+                  onChange={e => setWallAttributes(prev => ({ ...prev, height: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span>Elevation (m)</span>
+                <input
+                  type="number"
+                  className="border border-slate-200 rounded px-2 py-1 text-sm"
+                  value={wallAttributes.elevation}
+                  onChange={e => setWallAttributes(prev => ({ ...prev, elevation: Number(e.target.value) }))}
+                />
+              </label>
+            </div>
           </div>
         </div>
 
@@ -173,37 +307,60 @@ const FloorPlanEditor: React.FC = () => {
         )}
 
         {/* Canvas Container */}
-        <div 
+        <div
           ref={editorRef}
           className="bg-white shadow-lg rounded-sm w-[800px] h-[600px] mx-auto relative select-none cursor-crosshair border border-slate-300"
           onMouseMove={handleMouseMove}
+          onMouseDown={handleCanvasMouseDown}
         >
           {/* Grid Background */}
           <div className="absolute inset-0 z-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#64748b 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
 
           {/* Heatmap Layer */}
-          <HeatmapCanvas 
-             aps={aps} 
-             walls={walls} 
-             width={800} 
-             height={600} 
-             show={showHeatmap} 
+          <HeatmapCanvas
+             aps={aps}
+             walls={walls}
+             width={800}
+             height={600}
+             show={showHeatmap}
           />
 
           {/* Walls */}
-          {walls.map(wall => (
-             <div 
-                key={wall.id}
-                className="absolute z-10 bg-slate-800"
+          {[...walls, draftWall && { ...wallAttributes, id: 'draft', ...draftWall }].filter(Boolean).map((wall, idx) => {
+            const typedWall = wall as Wall;
+            const style = materialStyles[typedWall.material];
+            const dx = typedWall.x2 - typedWall.x1;
+            const dy = typedWall.y2 - typedWall.y1;
+            const isVertical = Math.abs(dx) < Math.abs(dy);
+            const width = isVertical ? typedWall.thickness : Math.max(Math.abs(dx), 1);
+            const height = isVertical ? Math.max(Math.abs(dy), 1) : typedWall.thickness;
+            const left = Math.min(typedWall.x1, typedWall.x2) - (isVertical ? typedWall.thickness / 2 : 0);
+            const top = Math.min(typedWall.y1, typedWall.y2) - (!isVertical ? typedWall.thickness / 2 : 0);
+
+            return (
+              <div
+                key={`${typedWall.id}-${idx}`}
+                className={`absolute z-10 rounded-sm ${typedWall.id === 'draft' ? 'opacity-60 border border-dashed border-blue-400' : ''}`}
                 style={{
-                  left: Math.min(wall.x1, wall.x2),
-                  top: Math.min(wall.y1, wall.y2),
-                  width: Math.abs(wall.x2 - wall.x1) || (wall.type === 'Concrete' ? 8 : 4),
-                  height: Math.abs(wall.y2 - wall.y1) || (wall.type === 'Concrete' ? 8 : 4),
-                  opacity: 0.8
+                  left,
+                  top,
+                  width,
+                  height,
+                  backgroundColor: style?.color ?? '#cbd5e1',
+                  backgroundImage: style?.pattern,
+                  boxShadow: style?.shadow,
+                  opacity: typedWall.id === 'draft' ? 0.7 : 0.9,
                 }}
-             />
-          ))}
+              >
+                {typedWall.id !== 'draft' && (
+                  <div className="absolute -top-5 left-1/2 -translate-x-1/2 bg-white text-[10px] px-2 py-1 rounded shadow-sm border border-slate-200 flex gap-2">
+                    <span className="font-semibold text-slate-700">{typedWall.material}</span>
+                    <span className="text-slate-500">{typedWall.thickness}px • {typedWall.height}m</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
           {/* Access Points */}
           {aps.map(ap => (
