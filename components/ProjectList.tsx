@@ -9,13 +9,17 @@ const ProjectList: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'All' | Project['status']>('All');
   const [message, setMessage] = useState('');
 
-  const projects = useProjectStore((state) => state.projects);
-  const globalSettings = useProjectStore((state) => state.globalSettings);
+  const { projects, globalSettings, selectedProjectId } = useProjectStore((state) => ({
+    projects: state.projects,
+    globalSettings: state.globalSettings,
+    selectedProjectId: state.selectedProjectId,
+  }));
   const addProject = useProjectStore((state) => state.addProject);
   const saveToStorage = useProjectStore((state) => state.saveToStorage);
   const loadFromStorage = useProjectStore((state) => state.loadFromStorage);
   const importData = useProjectStore((state) => state.importData);
   const updateGlobalSettings = useProjectStore((state) => state.updateGlobalSettings);
+  const setSelectedProjectId = useProjectStore((state) => state.setSelectedProjectId);
 
   useEffect(() => {
     loadFromStorage();
@@ -28,6 +32,11 @@ const ProjectList: React.FC = () => {
       return matchesSearch && matchesStatus;
     });
   }, [projects, searchTerm, statusFilter]);
+
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === selectedProjectId) ?? projects[0],
+    [projects, selectedProjectId]
+  );
 
   const handleNewProject = () => {
     addProject();
@@ -87,6 +96,18 @@ const ProjectList: React.FC = () => {
                 <option value="Active">Active</option>
                 <option value="Draft">Draft</option>
                 <option value="Archived">Archived</option>
+              </select>
+              <select
+                value={selectedProject?.id ?? ''}
+                onChange={(e) => setSelectedProjectId(e.target.value || undefined)}
+                className="bg-white border border-slate-200 text-slate-600 text-sm rounded-md px-3 py-1.5 outline-none focus:ring-2 focus:ring-blue-100"
+              >
+                <option value="">Active project: Auto-select first</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
               </select>
               <button
                 onClick={handleLoadFromLocal}
@@ -213,7 +234,13 @@ const ProjectList: React.FC = () => {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {filteredProjects.map((project) => (
-              <tr key={project.id} className="hover:bg-slate-50 transition-colors group cursor-pointer">
+              <tr
+                key={project.id}
+                onClick={() => setSelectedProjectId(project.id)}
+                className={`hover:bg-slate-50 transition-colors group cursor-pointer ${
+                  project.id === selectedProjectId ? 'bg-blue-50/70' : ''
+                }`}
+              >
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded bg-blue-50 flex items-center justify-center text-blue-600">

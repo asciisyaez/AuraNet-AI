@@ -1,10 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AccessPoint, Wall } from '../types';
 import { INITIAL_APS, INITIAL_WALLS, HARDWARE_TOOLS, ENV_TOOLS } from '../constants';
 import HeatmapCanvas from './HeatmapCanvas';
 import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info } from 'lucide-react';
 import { getOptimizationSuggestions } from '../services/geminiService';
 import { ANTENNA_PATTERNS, AP_LIBRARY, CHANNEL_OPTIONS } from '../data/apLibrary';
+import { useProjectStore } from '../services/projectStore';
 
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 600;
@@ -131,6 +132,21 @@ const FloorPlanEditor: React.FC = () => {
   const dragOffset = useRef({ x: 0, y: 0 });
   const editorRef = useRef<HTMLDivElement>(null);
   const [draftWall, setDraftWall] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+
+  const projects = useProjectStore((state) => state.projects);
+  const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
+  const setSelectedProjectId = useProjectStore((state) => state.setSelectedProjectId);
+
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === selectedProjectId) ?? projects[0],
+    [projects, selectedProjectId]
+  );
+
+  useEffect(() => {
+    if (!selectedProjectId && projects[0]) {
+      setSelectedProjectId(projects[0].id);
+    }
+  }, [projects, selectedProjectId, setSelectedProjectId]);
 
   const updateSelectedAp = (updates: Partial<AccessPoint>) => {
     if (!selectedApId) return;
@@ -285,6 +301,36 @@ const FloorPlanEditor: React.FC = () => {
     <div className="flex h-full" onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
       {/* Left Toolbar */}
       <div className="w-64 bg-white border-r border-slate-200 p-4 flex flex-col gap-6 overflow-y-auto shrink-0">
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <p className="text-[11px] font-semibold text-slate-600 mb-2">Active Project</p>
+          <select
+            value={selectedProject?.id ?? ''}
+            onChange={(e) => setSelectedProjectId(e.target.value || undefined)}
+            className="w-full text-sm border border-slate-200 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-100"
+          >
+            <option value="">Auto-select first project</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+          {selectedProject && (
+            <div className="mt-2 text-[11px] text-slate-600 space-y-1">
+              <div className="flex justify-between">
+                <span>Units</span>
+                <span className="font-semibold text-slate-800">{selectedProject.settings.units}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Signal Profiles</span>
+                <span className="text-right text-slate-700 truncate max-w-[120px]">
+                  {selectedProject.settings.defaultSignalProfiles.join(', ')}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
         <div>
           <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Add Hardware</h3>
           <div className="grid grid-cols-2 gap-2">
