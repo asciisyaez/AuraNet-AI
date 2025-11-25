@@ -91,6 +91,29 @@ export interface Wall {
   };
 }
 
+export type WallDetectionMode = 'precision' | 'balanced' | 'recall';
+
+export interface WallDetectionPreview {
+  overlay?: string;
+  mode: WallDetectionMode;
+  wallCount: number;
+  processingMs?: number;
+}
+
+export interface WallDetectionDiagnostics {
+  edgePixelRatio?: number;
+  rawSegments?: number;
+  mergedSegments?: number;
+  gapClosures?: number;
+  notes?: string;
+}
+
+export interface WallDetectionResult {
+  walls: Wall[];
+  preview?: WallDetectionPreview;
+  diagnostics?: WallDetectionDiagnostics;
+}
+
 export interface UserProfile {
   id: string;
   name: string;
