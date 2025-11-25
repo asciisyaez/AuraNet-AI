@@ -87,8 +87,55 @@ export interface Wall {
   metadata?: {
     pattern?: string;
     color?: string;
+    detected_type?: 'exterior' | 'interior' | 'partition';
     [key: string]: any;
   };
+}
+
+export interface Door {
+  id: string;
+  x: number;
+  y: number;
+  width: number; // meters
+  angle: number; // rotation in degrees
+  door_type: 'standard' | 'double' | 'sliding' | 'opening';
+}
+
+export interface DetectedRoom {
+  id: string;
+  center_x: number;
+  center_y: number;
+  area_sqm: number;
+  wall_ids: string[];
+}
+
+export interface WallDetectionResult {
+  walls: Wall[];
+  doors?: Door[];
+  rooms?: DetectedRoom[];
+  preview?: WallDetectionPreview;
+  diagnostics?: WallDetectionDiagnostics;
+}
+
+export type WallDetectionMode = 'precision' | 'balanced' | 'recall';
+
+export interface WallDetectionPreview {
+  overlay?: string;
+  mode: string;
+  wall_count: number;
+  door_count?: number;
+  room_count?: number;
+  processing_ms?: number;
+}
+
+export interface WallDetectionDiagnostics {
+  edge_pixel_ratio?: number;
+  raw_segments?: number;
+  merged_segments?: number;
+  contours_found?: number;
+  rooms_detected?: number;
+  doors_detected?: number;
+  notes?: string;
 }
 
 export type UserRole =

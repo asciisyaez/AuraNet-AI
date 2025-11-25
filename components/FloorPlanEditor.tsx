@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AccessPoint, Wall, FloorPlan, ScaleReference, WallDetectionMode, WallDetectionPreview, WallDetectionDiagnostics } from '../types';
+import { AccessPoint, Wall, FloorPlan, ScaleReference } from '../types';
 import { HARDWARE_TOOLS, ENV_TOOLS } from '../constants';
 import HeatmapCanvas from './HeatmapCanvas';
 import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info, Image as ImageIcon, Eye, EyeOff, Ruler, Move, ZoomIn, ZoomOut, Maximize, X, Wand2 } from 'lucide-react';
@@ -215,9 +215,9 @@ const FloorPlanEditor: React.FC = () => {
     coverageThreshold: -65
   });
 
-  const [wallDetectMode, setWallDetectMode] = useState<WallDetectionMode>('balanced');
-  const [detectionPreview, setDetectionPreview] = useState<WallDetectionPreview | null>(null);
-  const [detectionDiagnostics, setDetectionDiagnostics] = useState<WallDetectionDiagnostics | null>(null);
+  const [detectionPreview, setDetectionPreview] = useState<{ overlay?: string; wall_count: number; processing_ms?: number } | null>(null);
+  const [detectionProgress, setDetectionProgress] = useState<{ stage: string; percent: number; message: string } | null>(null);
+  const [isDetecting, setIsDetecting] = useState(false);
 
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [isPanning, setIsPanning] = useState(false);
@@ -233,6 +233,7 @@ const FloorPlanEditor: React.FC = () => {
     startY: number;
     initial: { x1: number; y1: number; x2: number; y2: number };
   } | null>(null);
+  const [resizingWallEndpoint, setResizingWallEndpoint] = useState<{ wallId: string; endpoint: 'start' | 'end' } | null>(null);
   const [draftWall, setDraftWall] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
   const selectedProject = useMemo(
@@ -424,6 +425,14 @@ const FloorPlanEditor: React.FC = () => {
     setIsDraggingWall(true);
   };
 
+  const handleWallEndpointMouseDown = (e: React.MouseEvent, wallId: string, endpoint: 'start' | 'end') => {
+    e.stopPropagation();
+    e.preventDefault();
+    setSelectedWallId(wallId);
+    setSelectedApId(null);
+    setResizingWallEndpoint({ wallId, endpoint });
+  };
+
   const handleMouseMove = (e: React.MouseEvent) => {
     const { x, y } = screenToCanvas(e.clientX, e.clientY);
 
@@ -446,6 +455,22 @@ const FloorPlanEditor: React.FC = () => {
           };
         }
         return ap;
+      }));
+      return;
+    }
+
+    // Handle wall endpoint resizing
+    if (resizingWallEndpoint) {
+      const { wallId, endpoint } = resizingWallEndpoint;
+      setWalls(prev => prev.map(w => {
+        if (w.id === wallId) {
+          if (endpoint === 'start') {
+            return { ...w, x1: x, y1: y };
+          } else {
+            return { ...w, x2: x, y2: y };
+          }
+        }
+        return w;
       }));
       return;
     }
@@ -489,6 +514,7 @@ const FloorPlanEditor: React.FC = () => {
     setIsPanning(false);
     setIsDraggingAp(false);
     setIsDraggingWall(false);
+    setResizingWallEndpoint(null);
     dragOffset.current = null;
     wallDragStart.current = null;
 
@@ -583,12 +609,18 @@ const FloorPlanEditor: React.FC = () => {
   const handleAutoDetectWalls = async () => {
     if (!floorPlan.imageDataUrl) return;
 
+    setIsDetecting(true);
+    setDetectionProgress({ stage: 'starting', percent: 0, message: 'Initializing wall detection...' });
+    setDetectionPreview(null);
+
     try {
       const { detectWalls } = await import('../services/wallDetection');
       const result = await detectWalls(
         floorPlan.imageDataUrl,
         metersPerPixel || DEFAULT_METERS_PER_PIXEL,
-        wallDetectMode
+        (progress) => {
+          setDetectionProgress(progress);
+        }
       );
       const detected = result.walls ?? [];
 
@@ -609,13 +641,16 @@ const FloorPlanEditor: React.FC = () => {
         }
       }));
 
-      setWalls(prev => [...prev, ...uniqueDetected]);
+      // Clear previous walls and set new ones
+      setWalls(uniqueDetected);
+      setSelectedWallId(null);
       setDetectionPreview(result.preview ?? null);
-      setDetectionDiagnostics(result.diagnostics ?? null);
-      alert(`Detected ${uniqueDetected.length} walls!`);
     } catch (e) {
       console.error("Wall detection failed", e);
       alert("Failed to detect walls. Please try a cleaner image.");
+    } finally {
+      setIsDetecting(false);
+      setDetectionProgress(null);
     }
   };
 
@@ -710,36 +745,45 @@ const FloorPlanEditor: React.FC = () => {
 
             <button
               onClick={handleAutoDetectWalls}
-              disabled={!floorPlan.imageDataUrl}
+              disabled={!floorPlan.imageDataUrl || isDetecting}
               className="w-full flex items-center justify-center gap-2 px-2 py-1.5 bg-blue-100 text-blue-700 rounded text-xs font-medium hover:bg-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Wand2 size={12} /> Auto-Detect Walls
+              {isDetecting ? (
+                <>
+                  <Loader2 size={12} className="animate-spin" /> Detecting...
+                </>
+              ) : (
+                <>
+                  <Wand2 size={12} /> Auto-Detect Walls
+                </>
+              )}
             </button>
 
-            <div className="flex items-center justify-between text-[11px] text-slate-600">
-              <span>Detection mode</span>
-              <div className="flex gap-1">
-                {(['precision', 'balanced', 'recall'] as WallDetectionMode[]).map(mode => (
-                  <button
-                    key={mode}
-                    onClick={() => setWallDetectMode(mode)}
-                    className={`px-2 py-1 rounded border text-[11px] ${wallDetectMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-200 hover:border-blue-300'}`}
-                  >
-                    {mode.charAt(0).toUpperCase() + mode.slice(1)}
-                  </button>
-                ))}
+            {/* Detection Progress Indicator */}
+            {detectionProgress && (
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-3 space-y-2 shadow-sm animate-pulse">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-blue-800 capitalize">
+                    {detectionProgress.stage.replace(/_/g, ' ')}
+                  </span>
+                  <span className="text-blue-600 font-bold">{detectionProgress.percent}%</span>
+                </div>
+                <div className="relative w-full h-2 bg-blue-100 rounded-full overflow-hidden">
+                  <div 
+                    className="absolute top-0 left-0 h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-300 ease-out rounded-full"
+                    style={{ width: `${detectionProgress.percent}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-slate-600 leading-tight">{detectionProgress.message}</p>
               </div>
-            </div>
+            )}
 
             {detectionPreview && (
               <div className="bg-white border border-blue-100 rounded-md p-2 space-y-2 shadow-sm">
                 <div className="flex items-center justify-between text-[11px] text-slate-600">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-slate-700">{detectionPreview.mode} mode</span>
-                    <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">{detectionPreview.wallCount} walls</span>
-                  </div>
-                  {typeof detectionPreview.processingMs === 'number' && (
-                    <span className="text-slate-500">{detectionPreview.processingMs} ms</span>
+                  <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">{detectionPreview.wall_count} walls detected</span>
+                  {typeof detectionPreview.processing_ms === 'number' && (
+                    <span className="text-slate-500">{detectionPreview.processing_ms} ms</span>
                   )}
                 </div>
                 {detectionPreview.overlay && (
@@ -749,20 +793,6 @@ const FloorPlanEditor: React.FC = () => {
                     className="w-full rounded border border-slate-200 object-contain"
                   />
                 )}
-                {detectionDiagnostics && (
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-600">
-                    <div>Edges: {(detectionDiagnostics.edgePixelRatio ?? 0).toFixed(3)}</div>
-                    <div>Merged: {detectionDiagnostics.mergedSegments ?? 0}</div>
-                    <div>Raw: {detectionDiagnostics.rawSegments ?? 0}</div>
-                    <div>Gap fixes: {detectionDiagnostics.gapClosures ?? 0}</div>
-                    {detectionDiagnostics.notes && (
-                      <div className="col-span-2 text-slate-500 italic">{detectionDiagnostics.notes}</div>
-                    )}
-                  </div>
-                )}
-                <p className="text-[11px] text-slate-500">
-                  Use this preview to compare detection quality before committing walls. Switch modes for more conservative or aggressive gap closing.
-                </p>
               </div>
             )}
 
@@ -977,23 +1007,53 @@ const FloorPlanEditor: React.FC = () => {
                 const clickableHeight = Math.max(typedWall.thickness, 12);
 
                 return (
-                  <div
-                    key={`${typedWall.id}-${idx}`}
-                    onMouseDown={(e) => typedWall.id !== 'draft' && handleWallMouseDown(e, typedWall.id)}
-                    className={`absolute rounded-sm cursor-move transition-all ${typedWall.id === 'draft' ? 'opacity-60 border border-dashed border-blue-400' : ''} ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
-                    style={{
-                      left: centerX,
-                      top: centerY,
-                      width: Math.max(length, 1),
-                      height: clickableHeight,
-                      backgroundColor: style?.color ?? '#cbd5e1',
-                      backgroundImage: style?.pattern,
-                      boxShadow: style?.shadow,
-                      transform: `translate(-50%, -50%) rotate(${angle}rad)`,
-                      transformOrigin: 'center center',
-                      zIndex: isSelected ? 25 : 10
-                    }}
-                  />
+                  <React.Fragment key={`${typedWall.id}-${idx}`}>
+                    <div
+                      onMouseDown={(e) => typedWall.id !== 'draft' && handleWallMouseDown(e, typedWall.id)}
+                      className={`absolute rounded-sm cursor-move transition-all ${typedWall.id === 'draft' ? 'opacity-60 border border-dashed border-blue-400' : ''} ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
+                      style={{
+                        left: centerX,
+                        top: centerY,
+                        width: Math.max(length, 1),
+                        height: clickableHeight,
+                        backgroundColor: style?.color ?? '#cbd5e1',
+                        backgroundImage: style?.pattern,
+                        boxShadow: style?.shadow,
+                        transform: `translate(-50%, -50%) rotate(${angle}rad)`,
+                        transformOrigin: 'center center',
+                        zIndex: isSelected ? 25 : 10
+                      }}
+                    />
+                    {/* Resize handles for selected walls */}
+                    {isSelected && typedWall.id !== 'draft' && (
+                      <>
+                        {/* Start endpoint handle */}
+                        <div
+                          onMouseDown={(e) => handleWallEndpointMouseDown(e, typedWall.id, 'start')}
+                          className="absolute w-4 h-4 bg-blue-500 border-2 border-white rounded-full cursor-nwse-resize shadow-md hover:bg-blue-600 hover:scale-110 transition-transform"
+                          style={{
+                            left: typedWall.x1,
+                            top: typedWall.y1,
+                            transform: 'translate(-50%, -50%)',
+                            zIndex: 30
+                          }}
+                          title="Drag to resize"
+                        />
+                        {/* End endpoint handle */}
+                        <div
+                          onMouseDown={(e) => handleWallEndpointMouseDown(e, typedWall.id, 'end')}
+                          className="absolute w-4 h-4 bg-blue-500 border-2 border-white rounded-full cursor-nwse-resize shadow-md hover:bg-blue-600 hover:scale-110 transition-transform"
+                          style={{
+                            left: typedWall.x2,
+                            top: typedWall.y2,
+                            transform: 'translate(-50%, -50%)',
+                            zIndex: 30
+                          }}
+                          title="Drag to resize"
+                        />
+                      </>
+                    )}
+                  </React.Fragment>
                 );
               })
             }
