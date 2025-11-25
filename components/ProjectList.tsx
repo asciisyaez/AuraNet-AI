@@ -20,8 +20,14 @@ const ProjectList: React.FC = () => {
   const setSelectedProjectId = useProjectStore((state) => state.setSelectedProjectId);
 
   const filteredProjects = useMemo(() => {
+    const lowerSearch = searchTerm.toLowerCase();
+
     return projects.filter((project) => {
-      const matchesSearch = project.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesSearch =
+        project.name.toLowerCase().includes(lowerSearch) ||
+        project.region.toLowerCase().includes(lowerSearch) ||
+        project.location.toLowerCase().includes(lowerSearch) ||
+        project.floor.toLowerCase().includes(lowerSearch);
       const matchesStatus = statusFilter === 'All' || project.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
@@ -74,12 +80,13 @@ const ProjectList: React.FC = () => {
   };
 
   const renderSignalProfiles = (profiles: string[]) => profiles.join(', ');
+  const formatProjectPath = (project: Project) => `${project.region} › ${project.location} › ${project.floor}`;
 
   return (
     <div className="p-8 max-w-7xl mx-auto h-full overflow-y-auto">
       <div className="flex justify-between items-end mb-8">
         <div>
-           <h2 className="text-2xl font-bold text-slate-800 mb-2">San Francisco HQ - Floor 1 Projects</h2>
+           <h2 className="text-2xl font-bold text-slate-800 mb-2">Projects by Region / Location / Floor</h2>
            <div className="flex gap-4">
               <select
                 value={statusFilter}
@@ -116,7 +123,7 @@ const ProjectList: React.FC = () => {
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search projects..."
+              placeholder="Search by region, location, or floor..."
               className="bg-white border border-slate-200 rounded-md px-4 py-2 w-64 outline-none focus:border-blue-500 text-sm"
             />
             <button
@@ -217,7 +224,7 @@ const ProjectList: React.FC = () => {
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              <th className="px-6 py-4">Project Name</th>
+              <th className="px-6 py-4">Region › Location › Floor</th>
               <th className="px-6 py-4">Status</th>
               <th className="px-6 py-4">AI Optimization</th>
               <th className="px-6 py-4">Units</th>
@@ -241,8 +248,13 @@ const ProjectList: React.FC = () => {
                         <FileText size={16} />
                     </div>
                     <div>
-                      <div className="font-medium text-slate-800">{project.name}</div>
-                      <div className="text-xs text-slate-500">{project.floorCount} floor(s)</div>
+                      <div className="font-medium text-slate-800">{formatProjectPath(project)}</div>
+                      <div className="text-xs text-slate-500 flex gap-2 flex-wrap">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{project.region}</span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{project.location}</span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{project.floor}</span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">{project.floorCount} floor(s)</span>
+                      </div>
                     </div>
                   </div>
                 </td>
