@@ -10,6 +10,7 @@ interface HeatmapCanvasProps {
   width: number;
   height: number;
   show: boolean;
+  metersPerPixel: number;
 }
 
 type ColorScale = 'turbo' | 'viridis' | 'magma';
@@ -233,6 +234,8 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
     };
   }), [walls]);
 
+  const pixelScale = metersPerPixel || 0.6;
+
   useEffect(() => {
     if (!show) return;
     if (typeof Worker !== 'undefined' && !workerRef.current) {
@@ -434,7 +437,7 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
         ref={canvasRef}
         width={width}
         height={height}
-        className="absolute top-0 left-0 pointer-events-none z-0 opacity-80"
+        className="absolute top-0 left-0 pointer-events-none z-10 opacity-80"
       />
 
       {show3d && (
