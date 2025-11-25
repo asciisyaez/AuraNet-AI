@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { AccessPoint, FloorPlan, ScaleReference, Wall } from '../types';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AccessPoint, Wall } from '../types';
 import { INITIAL_APS, INITIAL_WALLS, HARDWARE_TOOLS, ENV_TOOLS } from '../constants';
 import HeatmapCanvas from './HeatmapCanvas';
 import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info, Image as ImageIcon, Eye, EyeOff, Ruler } from 'lucide-react';
@@ -159,39 +159,20 @@ const FloorPlanEditor: React.FC = () => {
   const editorRef = useRef<HTMLDivElement>(null);
   const [draftWall, setDraftWall] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
-  useEffect(() => {
-    const nextFloorPlan = currentProject?.floorPlan ?? { opacity: 0.6, metersPerPixel: DEFAULT_METERS_PER_PIXEL };
-    setFloorPlan({
-      opacity: nextFloorPlan.opacity ?? 0.6,
-      metersPerPixel: nextFloorPlan.metersPerPixel ?? DEFAULT_METERS_PER_PIXEL,
-      imageDataUrl: nextFloorPlan.imageDataUrl,
-      imageName: nextFloorPlan.imageName,
-      width: nextFloorPlan.width,
-      height: nextFloorPlan.height,
-      reference: nextFloorPlan.reference,
-    });
-    setMetersPerPixel(nextFloorPlan.metersPerPixel ?? DEFAULT_METERS_PER_PIXEL);
-    setScaleLine(nextFloorPlan.reference ?? null);
-    setScaleInputMeters(nextFloorPlan.reference?.distanceMeters ?? 0);
-    setShowFloorPlan(!!nextFloorPlan.imageDataUrl);
-  }, [currentProject]);
+  const projects = useProjectStore((state) => state.projects);
+  const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
+  const setSelectedProjectId = useProjectStore((state) => state.setSelectedProjectId);
 
-  const persistFloorPlan = (updates: Partial<FloorPlan>) => {
-    const merged: FloorPlan = {
-      opacity: updates.opacity ?? floorPlan.opacity ?? 0.6,
-      metersPerPixel: updates.metersPerPixel ?? floorPlan.metersPerPixel ?? DEFAULT_METERS_PER_PIXEL,
-      imageDataUrl: updates.imageDataUrl ?? floorPlan.imageDataUrl,
-      imageName: updates.imageName ?? floorPlan.imageName,
-      width: updates.width ?? floorPlan.width,
-      height: updates.height ?? floorPlan.height,
-      reference: updates.reference ?? floorPlan.reference,
-    };
-    setFloorPlan(merged);
-    setMetersPerPixel(merged.metersPerPixel ?? DEFAULT_METERS_PER_PIXEL);
-    if (selectedProjectId) {
-      updateProject(selectedProjectId, { floorPlan: merged });
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === selectedProjectId) ?? projects[0],
+    [projects, selectedProjectId]
+  );
+
+  useEffect(() => {
+    if (!selectedProjectId && projects[0]) {
+      setSelectedProjectId(projects[0].id);
     }
-  };
+  }, [projects, selectedProjectId, setSelectedProjectId]);
 
   const updateSelectedAp = (updates: Partial<AccessPoint>) => {
     if (!selectedApId) return;
@@ -419,6 +400,36 @@ const FloorPlanEditor: React.FC = () => {
     <div className="flex h-full" onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
       {/* Left Toolbar */}
       <div className="w-64 bg-white border-r border-slate-200 p-4 flex flex-col gap-6 overflow-y-auto shrink-0">
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <p className="text-[11px] font-semibold text-slate-600 mb-2">Active Project</p>
+          <select
+            value={selectedProject?.id ?? ''}
+            onChange={(e) => setSelectedProjectId(e.target.value || undefined)}
+            className="w-full text-sm border border-slate-200 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-100"
+          >
+            <option value="">Auto-select first project</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+          {selectedProject && (
+            <div className="mt-2 text-[11px] text-slate-600 space-y-1">
+              <div className="flex justify-between">
+                <span>Units</span>
+                <span className="font-semibold text-slate-800">{selectedProject.settings.units}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Signal Profiles</span>
+                <span className="text-right text-slate-700 truncate max-w-[120px]">
+                  {selectedProject.settings.defaultSignalProfiles.join(', ')}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
         <div>
           <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Add Hardware</h3>
           <div className="grid grid-cols-2 gap-2">
