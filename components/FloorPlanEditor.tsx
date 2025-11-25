@@ -170,7 +170,7 @@ const FloorPlanEditor: React.FC = () => {
   const [walls, setWalls] = useState<Wall[]>([]);
   const [selectedApId, setSelectedApId] = useState<string | null>(null);
   const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
-  const [activeEnvToolId, setActiveEnvToolId] = useState<string>('');
+  const [activeEnvToolId, setActiveEnvToolId] = useState<string>(ENV_TOOLS[0]?.id ?? '');
   const [wallAttributes, setWallAttributes] = useState<Wall>(() => ({
     id: 'draft',
     x1: 0,
@@ -749,12 +749,12 @@ const FloorPlanEditor: React.FC = () => {
             )}
           </div>
         </div>
-      </div >
+      </div>
 
       {/* Main Editor Area */}
-      < div className="flex-1 bg-slate-100 relative overflow-hidden flex flex-col" >
+      <div className="flex-1 bg-slate-100 relative overflow-hidden flex flex-col">
         {/* Top Toolbar */}
-        < div className="absolute top-4 left-4 right-4 z-10 flex justify-between pointer-events-none" >
+        <div className="absolute top-4 left-4 right-4 z-10 flex justify-between pointer-events-none">
           <div className="pointer-events-auto bg-white rounded-lg shadow-sm border border-slate-200 p-1 flex gap-1">
             <button
               onClick={() => setTransform(prev => ({ ...prev, scale: prev.scale * 1.2 }))}
@@ -787,10 +787,10 @@ const FloorPlanEditor: React.FC = () => {
               <Wifi size={14} /> Heatmap
             </label>
           </div>
-        </div >
+        </div>
 
         {/* Canvas Container */}
-        < div
+        <div
           ref={containerRef}
           className="flex-1 relative overflow-hidden cursor-crosshair bg-slate-100"
           onWheel={handleWheel}
@@ -799,16 +799,16 @@ const FloorPlanEditor: React.FC = () => {
           style={{ cursor: isPanning ? 'grabbing' : isDraggingAp ? 'move' : 'crosshair' }}
         >
           {/* Grid Background */}
-          < div className="absolute inset-0 z-0 opacity-10 pointer-events-none"
+          <div className="absolute inset-0 z-0 opacity-10 pointer-events-none"
             style={{
               backgroundImage: 'radial-gradient(#64748b 1px, transparent 1px)',
               backgroundSize: `${20 * transform.scale}px ${20 * transform.scale}px`,
               backgroundPosition: `${transform.x}px ${transform.y}px`
             }}>
-          </div >
+          </div>
 
           {/* Transformed Content */}
-          < div
+          <div
             style={{
               transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
               transformOrigin: '0 0',
@@ -948,7 +948,7 @@ const FloorPlanEditor: React.FC = () => {
                 </svg>
               )
             }
-          </div >
+          </div>
 
           {/* Floating Property Inspectors */}
           {
@@ -1138,9 +1138,9 @@ const FloorPlanEditor: React.FC = () => {
               {isOptimizing ? <Loader2 className="animate-spin" size={16} /> : <><Wifi size={16} /> Optimize Coverage</>}
             </button>
           </div>
-        </div >
-      </div >
-    </div >
+        </div>
+      </div>
+    </div>
   );
 };
 
