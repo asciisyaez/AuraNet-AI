@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AccessPoint, FloorPlan, ScaleReference, Wall } from '../types';
 import { INITIAL_APS, INITIAL_WALLS, HARDWARE_TOOLS, ENV_TOOLS } from '../constants';
 import HeatmapCanvas from './HeatmapCanvas';
-import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info, Image, Eye, EyeOff, Ruler } from 'lucide-react';
+import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info, Image as ImageIcon, Eye, EyeOff, Ruler } from 'lucide-react';
 import { getOptimizationSuggestions } from '../services/geminiService';
 import { ANTENNA_PATTERNS, AP_LIBRARY, CHANNEL_OPTIONS } from '../data/apLibrary';
 import { useProjectStore } from '../services/projectStore';
@@ -205,7 +205,7 @@ const FloorPlanEditor: React.FC = () => {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
-      const img = new Image();
+      const img = new window.Image();
       img.onload = () => {
         persistFloorPlan({
           imageDataUrl: dataUrl,
@@ -437,7 +437,7 @@ const FloorPlanEditor: React.FC = () => {
           <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Floor Plan</h3>
           <div className="space-y-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
             <label className="flex items-center justify-between text-sm text-slate-700">
-              <span className="flex items-center gap-2"><Image size={16} /> Upload (PNG/JPEG/SVG)</span>
+              <span className="flex items-center gap-2"><ImageIcon size={16} /> Upload (PNG/JPEG/SVG)</span>
               <input
                 type="file"
                 accept="image/png,image/jpeg,image/svg+xml"
