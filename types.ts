@@ -11,11 +11,31 @@ export interface Project {
   lastModified: string;
   floorCount: number;
   settings: GlobalSettings;
+  floorPlan?: FloorPlan;
 }
 
 export interface PersistedProjectData {
   projects: Project[];
   globalSettings: GlobalSettings;
+}
+
+export interface FloorPlan {
+  imageDataUrl?: string;
+  imageName?: string;
+  width?: number;
+  height?: number;
+  opacity: number;
+  metersPerPixel: number;
+  reference?: ScaleReference;
+}
+
+export interface ScaleReference {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  pixelLength: number;
+  distanceMeters: number;
 }
 
 export interface AccessPoint {

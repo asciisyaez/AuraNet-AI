@@ -5,6 +5,11 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   defaultSignalProfiles: ['Data', 'Voice', 'Video'],
 };
 
+const DEFAULT_FLOOR_PLAN = {
+  opacity: 0.6,
+  metersPerPixel: 0.6,
+};
+
 const baseSettings = (overrides: Partial<GlobalSettings> = {}): GlobalSettings => ({
   ...DEFAULT_GLOBAL_SETTINGS,
   ...overrides,
@@ -20,6 +25,7 @@ export const DEFAULT_PROJECTS: Project[] = [
     lastModified: 'Oct 26, 2023',
     floorCount: 1,
     settings: baseSettings(),
+    floorPlan: DEFAULT_FLOOR_PLAN,
   },
   {
     id: '2',
@@ -29,6 +35,7 @@ export const DEFAULT_PROJECTS: Project[] = [
     lastModified: 'Oct 24, 2023',
     floorCount: 1,
     settings: baseSettings({ defaultSignalProfiles: ['Outdoor', 'IoT'] }),
+    floorPlan: DEFAULT_FLOOR_PLAN,
   },
   {
     id: '3',
@@ -38,6 +45,7 @@ export const DEFAULT_PROJECTS: Project[] = [
     lastModified: 'Sep 15, 2023',
     floorCount: 1,
     settings: baseSettings({ units: 'imperial' }),
+    floorPlan: DEFAULT_FLOOR_PLAN,
   },
   {
     id: '4',
@@ -47,6 +55,7 @@ export const DEFAULT_PROJECTS: Project[] = [
     lastModified: 'Nov 01, 2023',
     floorCount: 1,
     settings: baseSettings({ defaultSignalProfiles: ['Voice', 'Collaboration'] }),
+    floorPlan: DEFAULT_FLOOR_PLAN,
   },
 ];
 

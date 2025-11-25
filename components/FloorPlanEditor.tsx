@@ -1,14 +1,16 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AccessPoint, Wall } from '../types';
 import { INITIAL_APS, INITIAL_WALLS, HARDWARE_TOOLS, ENV_TOOLS } from '../constants';
 import HeatmapCanvas from './HeatmapCanvas';
-import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info } from 'lucide-react';
+import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info, Image as ImageIcon, Eye, EyeOff, Ruler } from 'lucide-react';
 import { getOptimizationSuggestions } from '../services/geminiService';
 import { ANTENNA_PATTERNS, AP_LIBRARY, CHANNEL_OPTIONS } from '../data/apLibrary';
+import { useProjectStore } from '../services/projectStore';
 
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 600;
 const COVERAGE_TARGET_DBM = -65;
+const DEFAULT_METERS_PER_PIXEL = 0.6;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
 
@@ -20,8 +22,8 @@ const segmentsIntersect = (ax: number, ay: number, bx: number, by: number, cx: n
   return lambda > 0 && lambda < 1 && gamma > 0 && gamma < 1;
 };
 
-const calculateSignal = (ap: AccessPoint, x: number, y: number, walls: Wall[]) => {
-  const horizontalDistance = Math.hypot(ap.x - x, ap.y - y);
+const calculateSignal = (ap: AccessPoint, x: number, y: number, walls: Wall[], metersPerPixel: number) => {
+  const horizontalDistance = Math.hypot(ap.x - x, ap.y - y) * metersPerPixel;
   const distance = Math.hypot(horizontalDistance, ap.height);
   const pathLoss = 20 * Math.log10(distance + 1);
   const wallLoss = walls.reduce((loss, wall) => {
@@ -35,7 +37,7 @@ const evaluateCoverage = (
   aps: AccessPoint[],
   walls: Wall[],
   target: number = COVERAGE_TARGET_DBM,
-  desiredCoverage: number = 95,
+  metersPerPixel: number = DEFAULT_METERS_PER_PIXEL
 ) => {
   const gridSpacing = 60;
   const gridPoints: { x: number; y: number }[] = [];
@@ -50,7 +52,7 @@ const evaluateCoverage = (
 
   gridPoints.forEach(point => {
     const bestSignal = Math.max(
-      ...aps.map(ap => calculateSignal(ap, point.x, point.y, walls))
+      ...aps.map(ap => calculateSignal(ap, point.x, point.y, walls, metersPerPixel))
     );
     bestSignals.push(bestSignal);
     if (bestSignal >= target) covered += 1;
@@ -75,11 +77,11 @@ const evaluateCoverage = (
   return { coveragePercent, averageSignal, score, apCount: aps.length };
 };
 
-let apIdCounter = 0;
-const generateApId = () => {
-  apIdCounter += 1;
-  return `AP-${Date.now()}-${apIdCounter}`;
-};
+const runSimulatedAnnealing = (aps: AccessPoint[], walls: Wall[], target: number, metersPerPixel: number) => {
+  let current = aps.map(ap => ({ ...ap }));
+  let best = current.map(ap => ({ ...ap }));
+  let { score: bestScore } = evaluateCoverage(best, walls, target, metersPerPixel);
+  let { score: currentScore } = evaluateCoverage(current, walls, target, metersPerPixel);
 
 const createRandomAp = () => {
   const template = AP_LIBRARY[0];
@@ -139,20 +141,11 @@ const runGeneticOptimization = (
     population.push(mutateLayout(baseIndividual));
   }
 
-  let best = baseIndividual;
-  let { score: bestScore } = evaluateCoverage(best, walls, target, desiredCoverage);
-
-  for (let gen = 0; gen < iterations; gen++) {
-    const evaluated = population
-      .map(layout => ({
-        layout,
-        metrics: evaluateCoverage(layout, walls, target, desiredCoverage)
-      }))
-      .sort((a, b) => a.metrics.score - b.metrics.score);
-
-    if (evaluated[0].metrics.score < bestScore) {
-      best = evaluated[0].layout.map(ap => ({ ...ap }));
-      bestScore = evaluated[0].metrics.score;
+    const { score: candidateScore } = evaluateCoverage(candidate, walls, target, metersPerPixel);
+    const acceptance = Math.exp((currentScore - candidateScore) / Math.max(temperature, 0.01));
+    if (candidateScore < currentScore || Math.random() < acceptance) {
+      current = candidate;
+      currentScore = candidateScore;
     }
 
     const elites = evaluated.slice(0, Math.max(2, Math.floor(populationSize * 0.3))).map(e => e.layout);
@@ -166,11 +159,16 @@ const runGeneticOptimization = (
     population = nextPopulation;
   }
 
-  const metrics = evaluateCoverage(best, walls, target, desiredCoverage);
-  return { bestAps: best, metrics };
+  const bestMetrics = evaluateCoverage(best, walls, target, metersPerPixel);
+  return { bestAps: best, metrics: bestMetrics };
 };
 
 const FloorPlanEditor: React.FC = () => {
+  const projects = useProjectStore((state) => state.projects);
+  const selectedProjectId = useProjectStore((state) => state.selectedProjectId ?? state.projects[0]?.id);
+  const updateProject = useProjectStore((state) => state.updateProject);
+  const currentProject = projects.find(project => project.id === selectedProjectId);
+
   const [aps, setAps] = useState<AccessPoint[]>(INITIAL_APS);
   const [walls, setWalls] = useState<Wall[]>(INITIAL_WALLS);
   const [selectedApId, setSelectedApId] = useState<string | null>(null);
@@ -194,8 +192,21 @@ const FloorPlanEditor: React.FC = () => {
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
   const [signalThreshold, setSignalThreshold] = useState(COVERAGE_TARGET_DBM);
-  const [populationSize, setPopulationSize] = useState(12);
-  const [optimizationIterations, setOptimizationIterations] = useState(60);
+  const [floorPlan, setFloorPlan] = useState<FloorPlan>({
+    opacity: currentProject?.floorPlan?.opacity ?? 0.6,
+    metersPerPixel: currentProject?.floorPlan?.metersPerPixel ?? DEFAULT_METERS_PER_PIXEL,
+    imageDataUrl: currentProject?.floorPlan?.imageDataUrl,
+    imageName: currentProject?.floorPlan?.imageName,
+    width: currentProject?.floorPlan?.width,
+    height: currentProject?.floorPlan?.height,
+    reference: currentProject?.floorPlan?.reference,
+  });
+  const [metersPerPixel, setMetersPerPixel] = useState<number>(floorPlan.metersPerPixel ?? DEFAULT_METERS_PER_PIXEL);
+  const [scaleLine, setScaleLine] = useState<ScaleReference | null>(currentProject?.floorPlan?.reference ?? null);
+  const [scaleInputMeters, setScaleInputMeters] = useState<number>(currentProject?.floorPlan?.reference?.distanceMeters ?? 0);
+  const [isDrawingScale, setIsDrawingScale] = useState(false);
+  const [draftScaleLine, setDraftScaleLine] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const [showFloorPlan, setShowFloorPlan] = useState(true);
 
   // Dragging state
   const [isDragging, setIsDragging] = useState(false);
@@ -203,9 +214,65 @@ const FloorPlanEditor: React.FC = () => {
   const editorRef = useRef<HTMLDivElement>(null);
   const [draftWall, setDraftWall] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
+  const projects = useProjectStore((state) => state.projects);
+  const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
+  const setSelectedProjectId = useProjectStore((state) => state.setSelectedProjectId);
+
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === selectedProjectId) ?? projects[0],
+    [projects, selectedProjectId]
+  );
+
+  useEffect(() => {
+    if (!selectedProjectId && projects[0]) {
+      setSelectedProjectId(projects[0].id);
+    }
+  }, [projects, selectedProjectId, setSelectedProjectId]);
+
   const updateSelectedAp = (updates: Partial<AccessPoint>) => {
     if (!selectedApId) return;
     setAps(prev => prev.map(ap => ap.id === selectedApId ? { ...ap, ...updates } : ap));
+  };
+
+  const handleFloorPlanUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const img = new window.Image();
+      img.onload = () => {
+        persistFloorPlan({
+          imageDataUrl: dataUrl,
+          imageName: file.name,
+          width: img.width,
+          height: img.height,
+        });
+        setShowFloorPlan(true);
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const clearFloorPlanImage = () => {
+    persistFloorPlan({ imageDataUrl: undefined, imageName: undefined, width: undefined, height: undefined });
+    setShowFloorPlan(false);
+  };
+
+  const applyScaleFromInput = (distanceMeters: number, reference?: ScaleReference | null) => {
+    const activeReference = reference ?? scaleLine;
+    if (!activeReference || !distanceMeters || activeReference.pixelLength <= 0) return;
+    const newMetersPerPixel = distanceMeters / activeReference.pixelLength;
+    const updatedReference = { ...activeReference, distanceMeters };
+    setScaleLine(updatedReference);
+    persistFloorPlan({ metersPerPixel: newMetersPerPixel, reference: updatedReference });
+  };
+
+  const handleScaleInputChange = (value: number) => {
+    setScaleInputMeters(value);
+    applyScaleFromInput(value);
   };
 
   const handleMouseDown = (e: React.MouseEvent, id: string, type: 'ap') => {
@@ -235,6 +302,11 @@ const FloorPlanEditor: React.FC = () => {
       const clampedY = Math.max(0, Math.min(newY, rect.height - 40));
 
       setAps(prev => prev.map(ap => ap.id === selectedApId ? { ...ap, x: clampedX, y: clampedY } : ap));
+    } else if (draftScaleLine && editorRef.current && isDrawingScale) {
+      const rect = editorRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      setDraftScaleLine(prev => prev ? { ...prev, x2: x, y2: y } : null);
     } else if (draftWall && editorRef.current) {
       const rect = editorRef.current.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -245,6 +317,24 @@ const FloorPlanEditor: React.FC = () => {
 
   const handleMouseUp = () => {
     setIsDragging(false);
+    if (draftScaleLine && isDrawingScale) {
+      const pixelLength = Math.hypot(draftScaleLine.x2 - draftScaleLine.x1, draftScaleLine.y2 - draftScaleLine.y1);
+      const reference: ScaleReference = {
+        ...draftScaleLine,
+        pixelLength,
+        distanceMeters: scaleInputMeters || scaleLine?.distanceMeters || 0,
+      };
+      setScaleLine(reference);
+      if (scaleInputMeters > 0 && pixelLength > 0) {
+        applyScaleFromInput(scaleInputMeters, reference);
+      } else {
+        persistFloorPlan({ reference });
+      }
+      setDraftScaleLine(null);
+      setIsDrawingScale(false);
+      return;
+    }
+
     if (draftWall) {
       const newWall: Wall = {
         ...wallAttributes,
@@ -265,10 +355,17 @@ const FloorPlanEditor: React.FC = () => {
   };
 
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    if (!editorRef.current || isDragging || !activeEnvToolId) return;
+    if (!editorRef.current || isDragging) return;
     const rect = editorRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+
+    if (isDrawingScale) {
+      setDraftScaleLine({ x1: x, y1: y, x2: x, y2: y });
+      return;
+    }
+
+    if (!activeEnvToolId) return;
 
     setDraftWall({ x1: x, y1: y, x2: x, y2: y });
   };
@@ -311,14 +408,8 @@ const FloorPlanEditor: React.FC = () => {
       return;
     }
 
-    const before = evaluateCoverage(aps, walls, signalThreshold);
-    const { bestAps, metrics } = runGeneticOptimization(
-      aps,
-      walls,
-      signalThreshold,
-      Math.max(4, populationSize),
-      Math.max(10, optimizationIterations)
-    );
+    const before = evaluateCoverage(aps, walls, signalThreshold, metersPerPixel);
+    const { bestAps, metrics } = runSimulatedAnnealing(aps, walls, signalThreshold, metersPerPixel);
     setAps(bestAps);
 
     const coverageDelta = metrics.coveragePercent - before.coveragePercent;
@@ -339,6 +430,8 @@ const FloorPlanEditor: React.FC = () => {
   };
 
   const selectedAp = aps.find(a => a.id === selectedApId);
+  const activeScaleOverlay = draftScaleLine ?? scaleLine;
+  const scaleMetersLabel = scaleLine?.distanceMeters || (scaleInputMeters > 0 ? scaleInputMeters : undefined);
 
   const materialStyles: Record<Wall['material'], { color: string; pattern?: string; shadow?: string }> = {
     Brick: {
@@ -367,6 +460,36 @@ const FloorPlanEditor: React.FC = () => {
     <div className="flex h-full" onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
       {/* Left Toolbar */}
       <div className="w-64 bg-white border-r border-slate-200 p-4 flex flex-col gap-6 overflow-y-auto shrink-0">
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+          <p className="text-[11px] font-semibold text-slate-600 mb-2">Active Project</p>
+          <select
+            value={selectedProject?.id ?? ''}
+            onChange={(e) => setSelectedProjectId(e.target.value || undefined)}
+            className="w-full text-sm border border-slate-200 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-100"
+          >
+            <option value="">Auto-select first project</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+          {selectedProject && (
+            <div className="mt-2 text-[11px] text-slate-600 space-y-1">
+              <div className="flex justify-between">
+                <span>Units</span>
+                <span className="font-semibold text-slate-800">{selectedProject.settings.units}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Signal Profiles</span>
+                <span className="text-right text-slate-700 truncate max-w-[120px]">
+                  {selectedProject.settings.defaultSignalProfiles.join(', ')}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
         <div>
           <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Add Hardware</h3>
           <div className="grid grid-cols-2 gap-2">
@@ -378,6 +501,61 @@ const FloorPlanEditor: React.FC = () => {
                 <span className="text-[10px] text-center leading-tight">{tool.name}</span>
               </button>
             ))}
+          </div>
+        </div>
+
+        <div>
+          <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Floor Plan</h3>
+          <div className="space-y-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
+            <label className="flex items-center justify-between text-sm text-slate-700">
+              <span className="flex items-center gap-2"><ImageIcon size={16} /> Upload (PNG/JPEG/SVG)</span>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/svg+xml"
+                onChange={handleFloorPlanUpload}
+                className="text-xs text-slate-500"
+              />
+            </label>
+            {floorPlan.imageName ? (
+              <div className="text-xs text-slate-600 bg-white border border-slate-200 rounded px-2 py-1 flex items-center justify-between">
+                <span className="truncate" title={floorPlan.imageName}>Loaded: {floorPlan.imageName}</span>
+                <button onClick={clearFloorPlanImage} className="text-red-500 hover:text-red-600 text-[11px]">Remove</button>
+              </div>
+            ) : (
+              <div className="text-xs text-slate-500">No image loaded</div>
+            )}
+            <div className="flex items-center justify-between text-sm text-slate-700">
+              <span className="flex items-center gap-2">
+                {showFloorPlan ? <Eye size={14} className="text-blue-500" /> : <EyeOff size={14} className="text-slate-400" />}
+                Floor plan layer
+              </span>
+              <label className="inline-flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={showFloorPlan}
+                  onChange={(e) => setShowFloorPlan(e.target.checked)}
+                  className="rounded text-blue-600"
+                  disabled={!floorPlan.imageDataUrl}
+                />
+                Show
+              </label>
+            </div>
+            <div className="space-y-1">
+              <label className="flex items-center justify-between text-[11px] text-slate-600">
+                <span>Opacity</span>
+                <span className="font-semibold text-slate-800">{Math.round((floorPlan.opacity ?? 0.6) * 100)}%</span>
+              </label>
+              <input
+                type="range"
+                min={0.1}
+                max={1}
+                step={0.05}
+                value={floorPlan.opacity ?? 0.6}
+                onChange={(e) => persistFloorPlan({ opacity: Number(e.target.value) })}
+                disabled={!floorPlan.imageDataUrl}
+                className="w-full accent-blue-500"
+              />
+            </div>
           </div>
         </div>
 
@@ -460,12 +638,21 @@ const FloorPlanEditor: React.FC = () => {
           <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Layers</h3>
           <div className="space-y-2">
             <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
-              <input type="checkbox" className="rounded text-blue-600 focus:ring-blue-500" checked disabled />
+              <input
+                type="checkbox"
+                className="rounded text-blue-600 focus:ring-blue-500"
+                checked={!!floorPlan.imageDataUrl && showFloorPlan}
+                onChange={(e) => setShowFloorPlan(e.target.checked)}
+                disabled={!floorPlan.imageDataUrl}
+              />
               <span>Floor Plan</span>
+              {floorPlan.imageDataUrl && (
+                <span className="text-[11px] text-slate-500">{Math.round((floorPlan.opacity ?? 0.6) * 100)}%</span>
+              )}
             </label>
             <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
-              <input 
-                type="checkbox" 
+              <input
+                type="checkbox"
                 className="rounded text-blue-600 focus:ring-blue-500"
                 checked={showHeatmap}
                 onChange={(e) => setShowHeatmap(e.target.checked)}
@@ -476,6 +663,38 @@ const FloorPlanEditor: React.FC = () => {
               <input type="checkbox" className="rounded text-blue-600 focus:ring-blue-500" checked onChange={()=>{}} />
               <span>AP Placement</span>
             </label>
+          </div>
+        </div>
+
+        <div>
+          <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Scale & Units</h3>
+          <div className="space-y-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
+            <button
+              onClick={() => { setIsDrawingScale(true); setDraftScaleLine(null); }}
+              className={`w-full flex items-center justify-center gap-2 text-xs font-semibold rounded-md px-3 py-2 border ${isDrawingScale ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-700 hover:bg-white'}`}
+            >
+              <Ruler size={14} /> {isDrawingScale ? 'Click & drag reference line' : 'Draw reference line'}
+            </button>
+            {scaleLine && (
+              <div className="text-[11px] text-slate-600 bg-white border border-slate-200 rounded px-2 py-1 flex justify-between">
+                <span>Pixels</span>
+                <span className="font-semibold text-slate-800">{(scaleLine.pixelLength ?? 0).toFixed(1)} px</span>
+              </div>
+            )}
+            <label className="text-xs text-slate-600 space-y-1 block">
+              <span>Reference length (meters)</span>
+              <input
+                type="number"
+                value={scaleInputMeters || ''}
+                onChange={(e) => handleScaleInputChange(Number(e.target.value))}
+                placeholder="e.g. 10"
+                className="w-full border border-slate-200 rounded px-2 py-1 text-sm"
+              />
+            </label>
+            <div className="text-[11px] text-slate-600 flex items-center justify-between">
+              <span>Meters per pixel</span>
+              <span className="font-semibold text-slate-800">{(metersPerPixel || DEFAULT_METERS_PER_PIXEL).toFixed(3)} m/px</span>
+            </div>
           </div>
         </div>
         
@@ -557,14 +776,46 @@ const FloorPlanEditor: React.FC = () => {
           {/* Grid Background */}
           <div className="absolute inset-0 z-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#64748b 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
 
+          {/* Floor Plan Image */}
+          {floorPlan.imageDataUrl && showFloorPlan && (
+            <img
+              src={floorPlan.imageDataUrl}
+              alt={floorPlan.imageName || 'Floor plan'}
+              className="absolute inset-0 w-full h-full object-contain pointer-events-none z-5"
+              style={{ opacity: floorPlan.opacity ?? 0.6 }}
+              draggable={false}
+            />
+          )}
+
           {/* Heatmap Layer */}
           <HeatmapCanvas
              aps={aps}
              walls={walls}
-             width={800}
-             height={600}
+             width={CANVAS_WIDTH}
+             height={CANVAS_HEIGHT}
              show={showHeatmap}
+             metersPerPixel={metersPerPixel || DEFAULT_METERS_PER_PIXEL}
           />
+
+          {/* Scale Overlay */}
+          {activeScaleOverlay && (
+            <svg className="absolute inset-0 z-30 pointer-events-none" width={CANVAS_WIDTH} height={CANVAS_HEIGHT}>
+              <line
+                x1={activeScaleOverlay.x1}
+                y1={activeScaleOverlay.y1}
+                x2={activeScaleOverlay.x2}
+                y2={activeScaleOverlay.y2}
+                stroke="#0ea5e9"
+                strokeWidth={3}
+                strokeDasharray={draftScaleLine ? '4 4' : '0'}
+              />
+              <circle cx={activeScaleOverlay.x1} cy={activeScaleOverlay.y1} r={4} fill="#0ea5e9" />
+              <circle cx={activeScaleOverlay.x2} cy={activeScaleOverlay.y2} r={4} fill="#0ea5e9" />
+              <text x={(activeScaleOverlay.x1 + activeScaleOverlay.x2) / 2} y={(activeScaleOverlay.y1 + activeScaleOverlay.y2) / 2 - 8} fill="#0f172a" fontSize="12" textAnchor="middle" fontWeight={600}>
+                {(scaleMetersLabel ? `${scaleMetersLabel.toFixed(2)} m` : `${(activeScaleOverlay.pixelLength ?? 0).toFixed(1)} px`)}
+              </text>
+            </svg>
+          )}
 
           {/* Walls */}
           {[...walls, draftWall && { ...wallAttributes, id: 'draft', ...draftWall }].filter(Boolean).map((wall, idx) => {
