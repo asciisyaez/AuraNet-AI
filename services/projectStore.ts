@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECTS, DEFAULT_FLOOR_PLAN } from '../constants';
+import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECTS, DEFAULT_FLOOR_PLAN, buildProjectName } from '../constants';
 import { GlobalSettings, PersistedProjectData, Project } from '../types';
 
 type ProjectState = {
@@ -34,6 +34,24 @@ const getDefaultState = (): ProjectState => ({
   selectedProjectId: DEFAULT_PROJECTS[0]?.id,
 });
 
+const normalizeProject = (project: Project): Project => {
+  const castProject = project as Project & { region?: string; location?: string; floor?: string; name?: string };
+  const region = castProject.region ?? 'Unassigned Region';
+  const location = castProject.location ?? 'Unassigned Location';
+  const floor = castProject.floor ?? 'Floor 1';
+
+  return {
+    ...project,
+    region,
+    location,
+    floor,
+    name: buildProjectName(region, location, floor),
+    settings: project.settings ?? DEFAULT_GLOBAL_SETTINGS,
+    floorPlan: project.floorPlan ?? DEFAULT_FLOOR_PLAN,
+    floorCount: project.floorCount ?? 1,
+  };
+};
+
 const persistPayload = (state: ProjectState): PersistedProjectData => ({
   projects: state.projects,
   globalSettings: state.globalSettings,
@@ -50,11 +68,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       year: 'numeric',
     });
 
-    const projectName = name || `New Project ${get().projects.length + 1}`;
+    const region = 'New Region';
+    const location = 'New Location';
+    const floor = 'Floor 1';
 
     const newProject: Project = {
       id: generateId(),
-      name: projectName,
+      region,
+      location,
+      floor,
+      name: name ?? buildProjectName(region, location, floor),
       status: 'Draft',
       optimizationStatus: 'Pending',
       lastModified: formattedDate,
@@ -129,7 +152,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as PersistedProjectData;
-        const nextProjects = parsed.projects ?? getDefaultState().projects;
+        const nextProjects = (parsed.projects ?? getDefaultState().projects).map(normalizeProject);
         const nextSettings = parsed.globalSettings ?? DEFAULT_GLOBAL_SETTINGS;
 
         set({
@@ -149,7 +172,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   importData: (payload: PersistedProjectData) => {
-    const nextProjects = payload.projects ?? [];
+    const nextProjects = (payload.projects ?? []).map(normalizeProject);
     const nextSettings = payload.globalSettings ?? DEFAULT_GLOBAL_SETTINGS;
 
     set({
