@@ -13,6 +13,7 @@ interface ProjectState {
 interface ProjectActions {
   addProject: (name?: string) => void;
   setProjects: (projects: Project[]) => void;
+  updateProject: (projectId: string, updates: Partial<Project>) => void;
   updateGlobalSettings: (updates: Partial<GlobalSettings>) => void;
   saveToStorage: () => PersistedProjectData;
   loadFromStorage: () => PersistedProjectData;
@@ -111,6 +112,7 @@ const addProject = (name?: string) => {
     lastModified: formattedDate,
     floorCount: 1,
     settings: state.globalSettings,
+    floorPlan: state.projects[0]?.floorPlan ?? { opacity: 0.6, metersPerPixel: 0.6 },
   };
 
   setState({
@@ -120,6 +122,14 @@ const addProject = (name?: string) => {
 };
 
 const setProjects = (projects: Project[]) => setState({ projects });
+
+const updateProject = (projectId: string, updates: Partial<Project>) => {
+  setState({
+    projects: state.projects.map((project) =>
+      project.id === projectId ? { ...project, ...updates } : project
+    ),
+  });
+};
 
 const updateGlobalSettings = (updates: Partial<GlobalSettings>) => {
   const merged = {
@@ -149,6 +159,7 @@ const subscribe = (listener: Listener) => {
 const api: ProjectActions = {
   addProject,
   setProjects,
+  updateProject,
   updateGlobalSettings,
   saveToStorage,
   loadFromStorage,

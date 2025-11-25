@@ -10,6 +10,7 @@ interface HeatmapCanvasProps {
   width: number;
   height: number;
   show: boolean;
+  metersPerPixel: number;
 }
 
 type ColorScale = 'turbo' | 'viridis' | 'magma';
@@ -22,7 +23,6 @@ interface WallSegment {
   attenuation: number;
 }
 
-const METERS_PER_PIXEL = 0.6;
 const DEFAULT_FREQ_MHZ = 5200;
 const ITU_DISTANCE_EXPONENT = 30; // Typical office environment exponent from P.1238
 
@@ -69,7 +69,7 @@ const log10 = (value: number) => Math.log(value) / Math.LN10;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height, show }) => {
+const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height, show, metersPerPixel }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const [colorScale, setColorScale] = useState<ColorScale>('turbo');
@@ -85,8 +85,10 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
     y1: wall.y1,
     x2: wall.x2,
     y2: wall.y2,
-    attenuation: wall.attenuation + (wall.type === 'Concrete' ? 4 : wall.type === 'Glass' ? 1 : 0)
+    attenuation: wall.attenuation + (wall.material === 'Concrete' ? 4 : wall.material === 'Glass' ? 1 : 0)
   })), [walls]);
+
+  const pixelScale = metersPerPixel || 0.6;
 
   useEffect(() => {
     if (!show) return;
@@ -116,8 +118,8 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
       for (let x = 0; x < width; x++) {
         let bestSignal = -Infinity;
         for (const ap of aps) {
-          const dx = (x + 0.5 - ap.x) * METERS_PER_PIXEL;
-          const dy = (y + 0.5 - ap.y) * METERS_PER_PIXEL;
+          const dx = (x + 0.5 - ap.x) * pixelScale;
+          const dy = (y + 0.5 - ap.y) * pixelScale;
           const distance = Math.max(Math.hypot(dx, dy), 0.5);
           const distanceKm = distance / 1000;
 
@@ -153,7 +155,7 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
     ctx.putImageData(imageData, 0, 0);
     offCtx.putImageData(offImage, 0, 0);
     setHeatmapVersion(v => v + 1);
-  }, [aps, wallSegments, width, height, show, colorScale, minDbm, maxDbm, coverageThreshold]);
+  }, [aps, wallSegments, width, height, show, colorScale, minDbm, maxDbm, coverageThreshold, pixelScale]);
 
   const heatmapTexture = useMemo(() => {
     if (!offscreenRef.current) return null;
@@ -231,7 +233,7 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
         ref={canvasRef}
         width={width}
         height={height}
-        className="absolute top-0 left-0 pointer-events-none z-0 opacity-80"
+        className="absolute top-0 left-0 pointer-events-none z-10 opacity-80"
       />
 
       {show3d && (
