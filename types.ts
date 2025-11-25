@@ -91,35 +91,37 @@ export interface Wall {
   };
 }
 
-export type WallDetectionMode = 'precision' | 'balanced' | 'recall';
+export type UserRole =
+  | 'Regional Admin'
+  | 'Local Admin'
+  | 'Regional Viewer'
+  | 'Local Viewer';
 
-export interface WallDetectionPreview {
-  overlay?: string;
-  mode: WallDetectionMode;
-  wallCount: number;
-  processingMs?: number;
-}
-
-export interface WallDetectionDiagnostics {
-  edgePixelRatio?: number;
-  rawSegments?: number;
-  mergedSegments?: number;
-  gapClosures?: number;
-  notes?: string;
-}
-
-export interface WallDetectionResult {
-  walls: Wall[];
-  preview?: WallDetectionPreview;
-  diagnostics?: WallDetectionDiagnostics;
+export interface Region {
+  id: string;
+  name: string;
+  status: 'Active' | 'Onboarding' | 'Maintenance';
 }
 
 export interface UserProfile {
   id: string;
   name: string;
   email: string;
-  role: 'Admin' | 'Network Engineer' | 'Viewer';
+  role: UserRole;
+  region?: string;
   status: 'Active' | 'Inactive';
+  lastLogin?: string;
+  avatarColor?: string;
+}
+
+export interface AuthSession {
+  userId: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  region?: string;
+  avatarUrl?: string;
+  provider: 'google';
 }
 
 export interface RoamingDataPoint {
