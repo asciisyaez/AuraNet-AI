@@ -262,11 +262,13 @@ const FloorPlanEditor: React.FC = () => {
 
   const deleteSelected = () => {
     if (selectedApId) {
-      setAps(aps.filter(ap => ap.id !== selectedApId));
+      const apIdToDelete = selectedApId;
+      setAps(prev => prev.filter(ap => ap.id !== apIdToDelete));
       setSelectedApId(null);
     }
     if (selectedWallId) {
-      setWalls(walls.filter(w => w.id !== selectedWallId));
+      const wallIdToDelete = selectedWallId;
+      setWalls(prev => prev.filter(w => w.id !== wallIdToDelete));
       setSelectedWallId(null);
     }
   };
@@ -439,8 +441,10 @@ const FloorPlanEditor: React.FC = () => {
     dragOffset.current = null;
 
     if (isDrawingScale && draftScaleLine) {
+      const pixelLength = Math.hypot(draftScaleLine.x2 - draftScaleLine.x1, draftScaleLine.y2 - draftScaleLine.y1);
       setScaleLine({
         ...draftScaleLine,
+        pixelLength,
         distanceMeters: 0
       });
       setDraftScaleLine(null);
@@ -530,8 +534,26 @@ const FloorPlanEditor: React.FC = () => {
     try {
       const { detectWalls } = await import('../services/wallDetection');
       const detected = await detectWalls(floorPlan.imageDataUrl, metersPerPixel || DEFAULT_METERS_PER_PIXEL);
-      setWalls(prev => [...prev, ...detected]);
-      alert(`Detected ${detected.length} walls!`);
+
+      // Ensure unique IDs and all required wall properties
+      const uniqueDetected: Wall[] = detected.map((w, i) => ({
+        id: `W-Auto-${Date.now()}-${i}`,
+        x1: w.x1,
+        y1: w.y1,
+        x2: w.x2,
+        y2: w.y2,
+        material: (w.material as Wall['material']) || 'Concrete',
+        attenuation: w.attenuation ?? 12,
+        thickness: w.thickness ?? 10,
+        height: w.height ?? 3,
+        elevation: w.elevation ?? 0,
+        metadata: {
+          color: w.metadata?.color ?? '#475569'
+        }
+      }));
+
+      setWalls(prev => [...prev, ...uniqueDetected]);
+      alert(`Detected ${uniqueDetected.length} walls!`);
     } catch (e) {
       console.error("Wall detection failed", e);
       alert("Failed to detect walls. Please try a cleaner image.");
@@ -651,34 +673,6 @@ const FloorPlanEditor: React.FC = () => {
                 className="w-full accent-blue-500"
               />
             </div>
-          </div>
-        </div>
-
-        <div>
-          <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Environment</h3>
-          <div className="grid grid-cols-3 gap-2">
-            {ENV_TOOLS.map(tool => (
-              <button
-                key={tool.id}
-                onClick={() => {
-                  setActiveEnvToolId(tool.id);
-                  setWallAttributes(prev => ({
-                    ...prev,
-                    material: tool.material as Wall['material'],
-                    attenuation: tool.attenuation,
-                    thickness: tool.thickness,
-                    height: tool.height,
-                    elevation: tool.elevation,
-                    metadata: { ...prev.metadata, color: tool.color }
-                  }));
-                }}
-                className={`flex flex-col items-center justify-center p-2 border rounded-lg transition-colors text-slate-600 ${activeEnvToolId === tool.id ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 hover:bg-slate-50'}`}
-              >
-                <Square size={16} className={`mb-1 ${activeEnvToolId === tool.id ? 'text-blue-500' : 'text-slate-400'}`} />
-                <span className="text-[10px] text-center">{tool.name}</span>
-                <span className="text-[10px] text-center text-slate-400">{tool.attenuation}dB</span>
-              </button>
-            ))}
           </div>
         </div>
 
@@ -826,15 +820,17 @@ const FloorPlanEditor: React.FC = () => {
             }}
           >
             {/* Floor Plan Image */}
-            {floorPlan.imageDataUrl && showFloorPlan && (
-              <img
-                src={floorPlan.imageDataUrl}
-                alt="Floor plan"
-                className="absolute top-0 left-0 pointer-events-none select-none"
-                style={{ opacity: floorPlan.opacity ?? 0.6 }}
-                draggable={false}
-              />
-            )}
+            {
+              floorPlan.imageDataUrl && showFloorPlan && (
+                <img
+                  src={floorPlan.imageDataUrl}
+                  alt="Floor plan"
+                  className="absolute top-0 left-0 pointer-events-none select-none"
+                  style={{ opacity: floorPlan.opacity ?? 0.6 }}
+                  draggable={false}
+                />
+              )
+            }
 
             {/* Heatmap Layer */}
             <HeatmapCanvas
@@ -851,252 +847,286 @@ const FloorPlanEditor: React.FC = () => {
             />
 
             {/* Walls Layer */}
-            {[...walls, draftWall && { ...wallAttributes, id: 'draft', ...draftWall }].filter(Boolean).map((wall, idx) => {
-              const typedWall = wall as Wall;
-              const style = materialStyles[typedWall.material];
-              const dx = typedWall.x2 - typedWall.x1;
-              const dy = typedWall.y2 - typedWall.y1;
-              const isVertical = Math.abs(dx) < Math.abs(dy);
-              const width = isVertical ? typedWall.thickness : Math.max(Math.abs(dx), 1);
-              const height = isVertical ? Math.max(Math.abs(dy), 1) : typedWall.thickness;
-              const left = Math.min(typedWall.x1, typedWall.x2) - (isVertical ? typedWall.thickness / 2 : 0);
-              const top = Math.min(typedWall.y1, typedWall.y2) - (!isVertical ? typedWall.thickness / 2 : 0);
-              const isSelected = selectedWallId === typedWall.id;
+            {
+              [...walls, draftWall && { ...wallAttributes, id: 'draft', ...draftWall }].filter(Boolean).map((wall, idx) => {
+                const typedWall = wall as Wall;
+                const style = materialStyles[typedWall.material];
+                const dx = typedWall.x2 - typedWall.x1;
+                const dy = typedWall.y2 - typedWall.y1;
+                
+                // Calculate wall length and angle
+                const length = Math.sqrt(dx * dx + dy * dy);
+                const angle = Math.atan2(dy, dx); // Angle in radians
+                
+                // Center point of the wall
+                const centerX = (typedWall.x1 + typedWall.x2) / 2;
+                const centerY = (typedWall.y1 + typedWall.y2) / 2;
+                
+                const isSelected = selectedWallId === typedWall.id;
+                
+                // Increase clickable area by using a minimum height
+                const clickableHeight = Math.max(typedWall.thickness, 12);
 
-              return (
-                <div
-                  key={`${typedWall.id}-${idx}`}
-                  onMouseDown={(e) => handleMouseDown(e, typedWall.id, 'wall')}
-                  className={`absolute z-10 rounded-sm cursor-pointer transition-all ${typedWall.id === 'draft' ? 'opacity-60 border border-dashed border-blue-400' : ''} ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1 z-20' : ''}`}
-                  style={{
-                    left,
-                    top,
-                    width,
-                    height,
-                    backgroundColor: style?.color ?? '#cbd5e1',
-                    backgroundImage: style?.pattern,
-                    boxShadow: style?.shadow,
-                    transform: `rotate(${Math.atan2(dy, dx)}rad)`
-                  }}
-                />
-              );
-            })}
+                return (
+                  <div
+                    key={`${typedWall.id}-${idx}`}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      if (typedWall.id !== 'draft') {
+                        setSelectedWallId(typedWall.id);
+                        setSelectedApId(null);
+                      }
+                    }}
+                    className={`absolute rounded-sm cursor-pointer transition-all ${typedWall.id === 'draft' ? 'opacity-60 border border-dashed border-blue-400' : ''} ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
+                    style={{
+                      left: centerX,
+                      top: centerY,
+                      width: Math.max(length, 1),
+                      height: clickableHeight,
+                      backgroundColor: style?.color ?? '#cbd5e1',
+                      backgroundImage: style?.pattern,
+                      boxShadow: style?.shadow,
+                      transform: `translate(-50%, -50%) rotate(${angle}rad)`,
+                      transformOrigin: 'center center',
+                      zIndex: isSelected ? 25 : 10
+                    }}
+                  />
+                );
+              })
+            }
 
             {/* APs Layer */}
-            {aps.map(ap => (
-              <div
-                key={ap.id}
-                onMouseDown={(e) => handleMouseDown(e, ap.id, 'ap')}
-                className={`absolute z-20 flex flex-col items-center justify-center transform -translate-x-1/2 -translate-y-1/2 cursor-move group transition-transform ${selectedApId === ap.id ? 'scale-110' : ''}`}
-                style={{ left: ap.x, top: ap.y }}
-              >
-                {selectedApId === ap.id && (
-                  <div className="absolute w-24 h-24 border border-blue-400 rounded-full opacity-30 animate-ping pointer-events-none"></div>
-                )}
-                <div className={`w-8 h-8 rounded-full bg-white shadow-md border-2 flex items-center justify-center relative ${selectedApId === ap.id ? 'border-blue-500' : 'border-slate-300'}`} style={{ backgroundColor: ap.color }}>
-                  <Wifi size={16} className={selectedApId === ap.id ? 'text-blue-600' : 'text-slate-500'} />
+            {
+              aps.map(ap => (
+                <div
+                  key={ap.id}
+                  onMouseDown={(e) => handleMouseDown(e, ap.id, 'ap')}
+                  className={`absolute z-20 flex flex-col items-center justify-center transform -translate-x-1/2 -translate-y-1/2 cursor-move group transition-transform ${selectedApId === ap.id ? 'scale-110' : ''}`}
+                  style={{ left: ap.x, top: ap.y }}
+                >
+                  {selectedApId === ap.id && (
+                    <div className="absolute w-24 h-24 border border-blue-400 rounded-full opacity-30 animate-ping pointer-events-none"></div>
+                  )}
+                  <div className={`w-8 h-8 rounded-full bg-white shadow-md border-2 flex items-center justify-center relative ${selectedApId === ap.id ? 'border-blue-500' : 'border-slate-300'}`} style={{ backgroundColor: ap.color }}>
+                    <Wifi size={16} className={selectedApId === ap.id ? 'text-blue-600' : 'text-slate-500'} />
+                  </div>
+                  {/* Hover Info */}
+                  <div className="absolute top-full mt-1 opacity-0 group-hover:opacity-100 transition-opacity bg-black/75 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap pointer-events-none">
+                    {ap.model}
+                  </div>
                 </div>
-                {/* Hover Info */}
-                <div className="absolute top-full mt-1 opacity-0 group-hover:opacity-100 transition-opacity bg-black/75 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap pointer-events-none">
-                  {ap.model}
-                </div>
-              </div>
-            ))}
+              ))
+            }
 
             {/* Scale Overlay */}
-            {activeScaleOverlay && (
-              <svg className="absolute top-0 left-0 z-30 pointer-events-none overflow-visible" width={canvasSize.width} height={canvasSize.height}>
-                <line
-                  x1={activeScaleOverlay.x1}
-                  y1={activeScaleOverlay.y1}
-                  x2={activeScaleOverlay.x2}
-                  y2={activeScaleOverlay.y2}
-                  stroke="#0ea5e9"
-                  strokeWidth={2 / transform.scale}
-                  strokeDasharray={draftScaleLine ? '4 4' : '0'}
-                />
-                <circle cx={activeScaleOverlay.x1} cy={activeScaleOverlay.y1} r={4 / transform.scale} fill="#0ea5e9" />
-                <circle cx={activeScaleOverlay.x2} cy={activeScaleOverlay.y2} r={4 / transform.scale} fill="#0ea5e9" />
-                <text
-                  x={(activeScaleOverlay.x1 + activeScaleOverlay.x2) / 2}
-                  y={(activeScaleOverlay.y1 + activeScaleOverlay.y2) / 2 - 10 / transform.scale}
-                  fill="#0f172a"
-                  fontSize={12 / transform.scale}
-                  textAnchor="middle"
-                  fontWeight={600}
-                  style={{ textShadow: '0 0 2px white' }}
-                >
-                  {(scaleMetersLabel ? `${scaleMetersLabel.toFixed(2)} m` : `${activeScalePixelLength.toFixed(1)} px`)}
-                </text>
-              </svg>
-            )}
+            {
+              activeScaleOverlay && (
+                <svg className="absolute top-0 left-0 z-30 pointer-events-none overflow-visible" width={canvasSize.width} height={canvasSize.height}>
+                  <line
+                    x1={activeScaleOverlay.x1}
+                    y1={activeScaleOverlay.y1}
+                    x2={activeScaleOverlay.x2}
+                    y2={activeScaleOverlay.y2}
+                    stroke="#0ea5e9"
+                    strokeWidth={2 / transform.scale}
+                    strokeDasharray={draftScaleLine ? '4 4' : '0'}
+                  />
+                  <circle cx={activeScaleOverlay.x1} cy={activeScaleOverlay.y1} r={4 / transform.scale} fill="#0ea5e9" />
+                  <circle cx={activeScaleOverlay.x2} cy={activeScaleOverlay.y2} r={4 / transform.scale} fill="#0ea5e9" />
+                  <text
+                    x={(activeScaleOverlay.x1 + activeScaleOverlay.x2) / 2}
+                    y={(activeScaleOverlay.y1 + activeScaleOverlay.y2) / 2 - 10 / transform.scale}
+                    fill="#0f172a"
+                    fontSize={12 / transform.scale}
+                    textAnchor="middle"
+                    fontWeight={600}
+                    style={{ textShadow: '0 0 2px white' }}
+                  >
+                    {(scaleMetersLabel ? `${scaleMetersLabel.toFixed(2)} m` : `${activeScalePixelLength.toFixed(1)} px`)}
+                  </text>
+                </svg>
+              )
+            }
           </div>
 
           {/* Floating Property Inspectors */}
-          {selectedAp && (
-            <div className="absolute top-4 right-4 w-64 bg-white rounded-lg shadow-lg border border-slate-200 p-4 z-40 animate-in slide-in-from-right-5 fade-in duration-200">
-              <div className="flex justify-between items-center mb-3">
-                <h3 className="text-xs font-bold text-slate-500 uppercase">Access Point</h3>
-                <button onClick={() => setSelectedApId(null)} className="text-slate-400 hover:text-slate-600"><X size={14} /></button>
-              </div>
-
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500">ID</span>
-                  <span className="text-slate-800 font-mono text-xs">{selectedAp.id}</span>
+          {
+            selectedAp && (
+              <div 
+                className="absolute top-4 right-4 w-64 bg-white rounded-lg shadow-lg border border-slate-200 p-4 z-40 animate-in slide-in-from-right-5 fade-in duration-200"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="text-xs font-bold text-slate-500 uppercase">Access Point</h3>
+                  <button onClick={() => setSelectedApId(null)} className="text-slate-400 hover:text-slate-600"><X size={14} /></button>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs text-slate-500">Model</label>
-                  <select
-                    className="w-full border border-slate-200 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={selectedAp.model}
-                    onChange={(e) => {
-                      const model = AP_LIBRARY.find(m => m.name === e.target.value);
-                      if (model) {
-                        updateSelectedAp({
-                          model: model.name,
-                          band: model.bands[0],
-                          power: model.defaultPower,
-                          height: model.defaultHeight,
-                          azimuth: model.defaultAzimuth ?? 0,
-                          tilt: model.defaultTilt ?? 0,
-                          antennaGain: model.antennaGain,
-                          antennaPatternFile: model.patternFile
-                        });
-                      }
-                    }}
-                  >
-                    {AP_LIBRARY.map(model => (
-                      <option key={model.id} value={model.name}>{model.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs text-slate-500">Band</label>
-                    <select
-                      className="w-full border border-slate-200 rounded-md px-2 py-1"
-                      value={selectedAp.band}
-                      onChange={(e) => updateSelectedAp({ band: e.target.value as AccessPoint['band'] })}
-                    >
-                      {['2.4GHz', '5GHz', '6GHz'].map(b => (
-                        <option key={b} value={b}>{b}</option>
-                      ))}
-                    </select>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">ID</span>
+                    <span className="text-slate-800 font-mono text-xs">{selectedAp.id}</span>
                   </div>
+
                   <div className="space-y-1">
-                    <label className="text-xs text-slate-500">Channel</label>
+                    <label className="text-xs text-slate-500">Model</label>
                     <select
-                      className="w-full border border-slate-200 rounded-md px-2 py-1"
-                      value={selectedAp.channel}
+                      className="w-full border border-slate-200 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      value={selectedAp.model}
                       onChange={(e) => {
-                        const val = e.target.value === 'Auto' ? 'Auto' : Number(e.target.value);
-                        updateSelectedAp({ channel: val as AccessPoint['channel'] });
+                        const model = AP_LIBRARY.find(m => m.name === e.target.value);
+                        if (model) {
+                          updateSelectedAp({
+                            model: model.name,
+                            band: model.bands[0],
+                            power: model.defaultPower,
+                            height: model.defaultHeight,
+                            azimuth: model.defaultAzimuth ?? 0,
+                            tilt: model.defaultTilt ?? 0,
+                            antennaGain: model.antennaGain,
+                            antennaPatternFile: model.patternFile
+                          });
+                        }
                       }}
                     >
-                      {CHANNEL_OPTIONS.map(ch => (
-                        <option key={ch} value={ch}>{ch}</option>
+                      {AP_LIBRARY.map(model => (
+                        <option key={model.id} value={model.name}>{model.name}</option>
                       ))}
                     </select>
                   </div>
-                </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs text-slate-500 flex justify-between">
-                    <span>Tx Power</span>
-                    <span>{selectedAp.power} dBm</span>
-                  </label>
-                  <input
-                    type="range"
-                    min="5"
-                    max="30"
-                    value={selectedAp.power}
-                    onChange={(e) => updateSelectedAp({ power: Number(e.target.value) })}
-                    className="w-full accent-blue-500"
-                  />
-                </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs text-slate-500">Band</label>
+                      <select
+                        className="w-full border border-slate-200 rounded-md px-2 py-1"
+                        value={selectedAp.band}
+                        onChange={(e) => updateSelectedAp({ band: e.target.value as AccessPoint['band'] })}
+                      >
+                        {['2.4GHz', '5GHz', '6GHz'].map(b => (
+                          <option key={b} value={b}>{b}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-slate-500">Channel</label>
+                      <select
+                        className="w-full border border-slate-200 rounded-md px-2 py-1"
+                        value={selectedAp.channel}
+                        onChange={(e) => {
+                          const val = e.target.value === 'Auto' ? 'Auto' : Number(e.target.value);
+                          updateSelectedAp({ channel: val as AccessPoint['channel'] });
+                        }}
+                      >
+                        {CHANNEL_OPTIONS.map(ch => (
+                          <option key={ch} value={ch}>{ch}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs text-slate-500 flex justify-between">
-                    <span>Azimuth</span>
-                    <span>{selectedAp.azimuth}°</span>
-                  </label>
-                  <input
-                    type="range"
-                    min="-180"
-                    max="180"
-                    value={selectedAp.azimuth}
-                    onChange={(e) => updateSelectedAp({ azimuth: Number(e.target.value) })}
-                    className="w-full accent-blue-500"
-                  />
-                </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-500 flex justify-between">
+                      <span>Tx Power</span>
+                      <span>{selectedAp.power} dBm</span>
+                    </label>
+                    <input
+                      type="range"
+                      min="5"
+                      max="30"
+                      value={selectedAp.power}
+                      onChange={(e) => updateSelectedAp({ power: Number(e.target.value) })}
+                      className="w-full accent-blue-500"
+                    />
+                  </div>
 
-                <div className="pt-3 border-t border-slate-100">
-                  <button
-                    onClick={() => deleteSelected()}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-md text-xs font-medium transition-colors"
-                  >
-                    <Trash2 size={14} /> Delete Access Point
-                  </button>
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-500 flex justify-between">
+                      <span>Azimuth</span>
+                      <span>{selectedAp.azimuth}°</span>
+                    </label>
+                    <input
+                      type="range"
+                      min="-180"
+                      max="180"
+                      value={selectedAp.azimuth}
+                      onChange={(e) => updateSelectedAp({ azimuth: Number(e.target.value) })}
+                      className="w-full accent-blue-500"
+                    />
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100">
+                    <button
+                      onClick={() => deleteSelected()}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-md text-xs font-medium transition-colors"
+                    >
+                      <Trash2 size={14} /> Delete Access Point
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )
+          }
 
-          {selectedWall && (
-            <div className="absolute top-4 right-4 w-64 bg-white rounded-lg shadow-lg border border-slate-200 p-4 z-40 animate-in slide-in-from-right-5 fade-in duration-200">
-              <div className="flex justify-between items-center mb-3">
-                <h3 className="text-xs font-bold text-slate-500 uppercase">Wall Properties</h3>
-                <button onClick={() => setSelectedWallId(null)} className="text-slate-400 hover:text-slate-600"><X size={14} /></button>
-              </div>
-              <div className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-xs text-slate-500">Material</label>
-                  <select
-                    className="w-full border border-slate-200 rounded-md px-2 py-1"
-                    value={selectedWall.material}
-                    onChange={(e) => {
-                      const mat = e.target.value as Wall['material'];
-                      const tool = ENV_TOOLS.find(t => t.material === mat);
-                      setWalls(prev => prev.map(w => w.id === selectedWall.id ? {
-                        ...w,
-                        material: mat,
-                        attenuation: tool?.attenuation ?? w.attenuation,
-                        thickness: tool?.thickness ?? w.thickness
-                      } : w));
-                    }}
-                  >
-                    {ENV_TOOLS.map(t => (
-                      <option key={t.id} value={t.material}>{t.name}</option>
-                    ))}
-                  </select>
+          {
+            selectedWall && (
+              <div 
+                className="absolute top-4 right-4 w-64 bg-white rounded-lg shadow-lg border border-slate-200 p-4 z-40 animate-in slide-in-from-right-5 fade-in duration-200"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="text-xs font-bold text-slate-500 uppercase">Wall Properties</h3>
+                  <button onClick={() => setSelectedWallId(null)} className="text-slate-400 hover:text-slate-600"><X size={14} /></button>
                 </div>
-                <div className="pt-3 border-t border-slate-100">
-                  <button
-                    onClick={() => deleteSelected()}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-md text-xs font-medium transition-colors"
-                  >
-                    <Trash2 size={14} /> Delete Wall
-                  </button>
+                <div className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-500">Material</label>
+                    <select
+                      className="w-full border border-slate-200 rounded-md px-2 py-1"
+                      value={selectedWall.material}
+                      onChange={(e) => {
+                        const mat = e.target.value as Wall['material'];
+                        const tool = ENV_TOOLS.find(t => t.material === mat);
+                        setWalls(prev => prev.map(w => w.id === selectedWall.id ? {
+                          ...w,
+                          material: mat,
+                          attenuation: tool?.attenuation ?? w.attenuation,
+                          thickness: tool?.thickness ?? w.thickness
+                        } : w));
+                      }}
+                    >
+                      {ENV_TOOLS.map(t => (
+                        <option key={t.id} value={t.material}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="pt-3 border-t border-slate-100">
+                    <button
+                      onClick={() => deleteSelected()}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-md text-xs font-medium transition-colors"
+                    >
+                      <Trash2 size={14} /> Delete Wall
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )
+          }
 
           {/* AI Insight Popup */}
-          {aiSuggestion && (
-            <div className="absolute bottom-8 left-8 right-8 z-20 bg-white rounded-xl shadow-xl border border-blue-100 p-4 animate-in slide-in-from-bottom-5 fade-in duration-300 max-w-2xl mx-auto">
-              <div className="flex justify-between items-start mb-2">
-                <h4 className="text-blue-700 font-semibold flex items-center gap-2"><Info size={18} /> AI Optimization Insights</h4>
-                <button onClick={() => setAiSuggestion(null)} className="text-slate-400 hover:text-slate-600">×</button>
+          {
+            aiSuggestion && (
+              <div className="absolute bottom-8 left-8 right-8 z-20 bg-white rounded-xl shadow-xl border border-blue-100 p-4 animate-in slide-in-from-bottom-5 fade-in duration-300 max-w-2xl mx-auto">
+                <div className="flex justify-between items-start mb-2">
+                  <h4 className="text-blue-700 font-semibold flex items-center gap-2"><Info size={18} /> AI Optimization Insights</h4>
+                  <button onClick={() => setAiSuggestion(null)} className="text-slate-400 hover:text-slate-600">×</button>
+                </div>
+                <div className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">
+                  {aiSuggestion}
+                </div>
               </div>
-              <div className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">
-                {aiSuggestion}
-              </div>
-            </div>
-          )}
+            )
+          }
 
           {/* Bottom Action Bar */}
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 z-10">
