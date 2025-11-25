@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AccessPoint, Wall, FloorPlan, ScaleReference } from '../types';
+import { AccessPoint, Wall, FloorPlan, ScaleReference, WallDetectionMode, WallDetectionPreview, WallDetectionDiagnostics } from '../types';
 import { HARDWARE_TOOLS, ENV_TOOLS } from '../constants';
 import HeatmapCanvas from './HeatmapCanvas';
 import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info, Image as ImageIcon, Eye, EyeOff, Ruler, Move, ZoomIn, ZoomOut, Maximize, X, Wand2 } from 'lucide-react';
@@ -215,6 +215,10 @@ const FloorPlanEditor: React.FC = () => {
     coverageThreshold: -65
   });
 
+  const [wallDetectMode, setWallDetectMode] = useState<WallDetectionMode>('balanced');
+  const [detectionPreview, setDetectionPreview] = useState<WallDetectionPreview | null>(null);
+  const [detectionDiagnostics, setDetectionDiagnostics] = useState<WallDetectionDiagnostics | null>(null);
+
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [isPanning, setIsPanning] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -295,6 +299,8 @@ const FloorPlanEditor: React.FC = () => {
           width: img.width,
           height: img.height,
         });
+        setDetectionPreview(null);
+        setDetectionDiagnostics(null);
         setShowFloorPlan(true);
         setTransform({
           x: (containerRef.current?.clientWidth ?? 800) / 2 - img.width / 2,
@@ -310,6 +316,8 @@ const FloorPlanEditor: React.FC = () => {
   const clearFloorPlanImage = () => {
     persistFloorPlan({ imageDataUrl: undefined, imageName: undefined, width: undefined, height: undefined });
     setShowFloorPlan(false);
+    setDetectionPreview(null);
+    setDetectionDiagnostics(null);
   };
 
   const applyScaleFromInput = (distanceMeters: number, reference?: ScaleReference | null) => {
@@ -577,7 +585,12 @@ const FloorPlanEditor: React.FC = () => {
 
     try {
       const { detectWalls } = await import('../services/wallDetection');
-      const detected = await detectWalls(floorPlan.imageDataUrl, metersPerPixel || DEFAULT_METERS_PER_PIXEL);
+      const result = await detectWalls(
+        floorPlan.imageDataUrl,
+        metersPerPixel || DEFAULT_METERS_PER_PIXEL,
+        wallDetectMode
+      );
+      const detected = result.walls ?? [];
 
       // Ensure unique IDs and all required wall properties
       const uniqueDetected: Wall[] = detected.map((w, i) => ({
@@ -597,6 +610,8 @@ const FloorPlanEditor: React.FC = () => {
       }));
 
       setWalls(prev => [...prev, ...uniqueDetected]);
+      setDetectionPreview(result.preview ?? null);
+      setDetectionDiagnostics(result.diagnostics ?? null);
       alert(`Detected ${uniqueDetected.length} walls!`);
     } catch (e) {
       console.error("Wall detection failed", e);
@@ -700,6 +715,56 @@ const FloorPlanEditor: React.FC = () => {
             >
               <Wand2 size={12} /> Auto-Detect Walls
             </button>
+
+            <div className="flex items-center justify-between text-[11px] text-slate-600">
+              <span>Detection mode</span>
+              <div className="flex gap-1">
+                {(['precision', 'balanced', 'recall'] as WallDetectionMode[]).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => setWallDetectMode(mode)}
+                    className={`px-2 py-1 rounded border text-[11px] ${wallDetectMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-200 hover:border-blue-300'}`}
+                  >
+                    {mode.charAt(0).toUpperCase() + mode.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {detectionPreview && (
+              <div className="bg-white border border-blue-100 rounded-md p-2 space-y-2 shadow-sm">
+                <div className="flex items-center justify-between text-[11px] text-slate-600">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-slate-700">{detectionPreview.mode} mode</span>
+                    <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">{detectionPreview.wallCount} walls</span>
+                  </div>
+                  {typeof detectionPreview.processingMs === 'number' && (
+                    <span className="text-slate-500">{detectionPreview.processingMs} ms</span>
+                  )}
+                </div>
+                {detectionPreview.overlay && (
+                  <img
+                    src={detectionPreview.overlay}
+                    alt="Detected wall overlay"
+                    className="w-full rounded border border-slate-200 object-contain"
+                  />
+                )}
+                {detectionDiagnostics && (
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-600">
+                    <div>Edges: {(detectionDiagnostics.edgePixelRatio ?? 0).toFixed(3)}</div>
+                    <div>Merged: {detectionDiagnostics.mergedSegments ?? 0}</div>
+                    <div>Raw: {detectionDiagnostics.rawSegments ?? 0}</div>
+                    <div>Gap fixes: {detectionDiagnostics.gapClosures ?? 0}</div>
+                    {detectionDiagnostics.notes && (
+                      <div className="col-span-2 text-slate-500 italic">{detectionDiagnostics.notes}</div>
+                    )}
+                  </div>
+                )}
+                <p className="text-[11px] text-slate-500">
+                  Use this preview to compare detection quality before committing walls. Switch modes for more conservative or aggressive gap closing.
+                </p>
+              </div>
+            )}
 
             <div className="space-y-1">
               <label className="flex items-center justify-between text-[11px] text-slate-600">

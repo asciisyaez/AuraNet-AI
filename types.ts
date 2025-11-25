@@ -5,6 +5,9 @@ export interface GlobalSettings {
 
 export interface Project {
   id: string;
+  region: string;
+  location: string;
+  floor: string;
   name: string;
   status: 'Draft' | 'Active' | 'Archived';
   optimizationStatus: 'Pending' | 'Optimized' | '-';
