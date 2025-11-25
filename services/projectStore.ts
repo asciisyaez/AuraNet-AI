@@ -161,3 +161,7 @@ export const useProjectStore = <T>(selector: (state: ProjectStore) => T): T =>
   useSyncExternalStore(subscribe, () => selector(getSnapshot()), () => selector(getSnapshot()));
 
 export const projectStoreApi = api;
+export const __resetProjectStore = () => {
+  state = getDefaultState();
+  listeners.clear();
+};

@@ -1,0 +1,20 @@
+{
+  "projects": [
+    {
+      "id": "fixture-1",
+      "name": "Fixture Project",
+      "status": "Active",
+      "optimizationStatus": "Pending",
+      "lastModified": "Jan 01, 2024",
+      "floorCount": 2,
+      "settings": {
+        "units": "metric",
+        "defaultSignalProfiles": ["Voice", "IoT"]
+      }
+    }
+  ],
+  "globalSettings": {
+    "units": "imperial",
+    "defaultSignalProfiles": ["Data", "Video"]
+  }
+}
