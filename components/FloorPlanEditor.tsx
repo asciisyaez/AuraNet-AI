@@ -31,7 +31,12 @@ const calculateSignal = (ap: AccessPoint, x: number, y: number, walls: Wall[]) =
   return ap.power + ap.antennaGain - pathLoss - wallLoss;
 };
 
-const evaluateCoverage = (aps: AccessPoint[], walls: Wall[], target: number = COVERAGE_TARGET_DBM) => {
+const evaluateCoverage = (
+  aps: AccessPoint[],
+  walls: Wall[],
+  target: number = COVERAGE_TARGET_DBM,
+  desiredCoverage: number = 95,
+) => {
   const gridSpacing = 60;
   const gridPoints: { x: number; y: number }[] = [];
   for (let x = gridSpacing; x < CANVAS_WIDTH; x += gridSpacing) {
@@ -60,45 +65,103 @@ const evaluateCoverage = (aps: AccessPoint[], walls: Wall[], target: number = CO
     }, penalty);
   }, 0);
 
-  // Lower is better
-  const score = (100 - coveragePercent) * 5 + (target - averageSignal) * 0.5 + imbalancePenalty;
+  const coverageGap = Math.max(0, desiredCoverage - coveragePercent);
+  const apPenalty = aps.length * 2;
+  const signalPenalty = Math.max(0, target - averageSignal) * 0.5;
 
-  return { coveragePercent, averageSignal, score };
+  // Lower is better
+  const score = coverageGap * 6 + signalPenalty + imbalancePenalty + apPenalty;
+
+  return { coveragePercent, averageSignal, score, apCount: aps.length };
 };
 
-const runSimulatedAnnealing = (aps: AccessPoint[], walls: Wall[], target: number) => {
-  let current = aps.map(ap => ({ ...ap }));
-  let best = current.map(ap => ({ ...ap }));
-  let { score: bestScore } = evaluateCoverage(best, walls, target);
-  let { score: currentScore } = evaluateCoverage(current, walls, target);
+const createRandomAp = () => {
+  const template = AP_LIBRARY[0];
+  return {
+    id: `AP-${Date.now().toString().slice(-4)}-${Math.floor(Math.random() * 1000)}`,
+    x: clamp(Math.random() * CANVAS_WIDTH, 40, CANVAS_WIDTH - 40),
+    y: clamp(Math.random() * CANVAS_HEIGHT, 40, CANVAS_HEIGHT - 40),
+    model: template.name,
+    band: template.bands[0],
+    power: template.defaultPower,
+    channel: 'Auto',
+    height: template.defaultHeight,
+    azimuth: template.defaultAzimuth ?? 0,
+    tilt: template.defaultTilt ?? 0,
+    antennaGain: template.antennaGain,
+    antennaPatternFile: template.patternFile,
+    color: '#3b82f6'
+  } as AccessPoint;
+};
 
-  const iterations = 250;
-  for (let i = 0; i < iterations; i++) {
-    const temperature = 1 - i / iterations;
-    const candidate = current.map(ap => ({ ...ap }));
+const mutateLayout = (aps: AccessPoint[]) => {
+  const candidate = aps.map(ap => ({ ...ap }));
+  const roll = Math.random();
+
+  if (roll < 0.2 && candidate.length > 1) {
+    // Remove an AP
+    const removeIndex = Math.floor(Math.random() * candidate.length);
+    candidate.splice(removeIndex, 1);
+  } else if (roll < 0.4 && candidate.length < 12) {
+    // Add a new AP
+    candidate.push(createRandomAp());
+  } else {
+    // Move an AP slightly
     const apIndex = Math.floor(Math.random() * candidate.length);
-    const jitter = Math.max(10, 120 * temperature);
+    const jitter = Math.max(8, 80 * Math.random());
     const deltaX = (Math.random() - 0.5) * jitter;
     const deltaY = (Math.random() - 0.5) * jitter;
-
     candidate[apIndex].x = clamp(candidate[apIndex].x + deltaX, 40, CANVAS_WIDTH - 40);
     candidate[apIndex].y = clamp(candidate[apIndex].y + deltaY, 40, CANVAS_HEIGHT - 40);
-
-    const { score: candidateScore } = evaluateCoverage(candidate, walls, target);
-    const acceptance = Math.exp((currentScore - candidateScore) / Math.max(temperature, 0.01));
-    if (candidateScore < currentScore || Math.random() < acceptance) {
-      current = candidate;
-      currentScore = candidateScore;
-    }
-
-    if (candidateScore < bestScore) {
-      best = candidate.map(ap => ({ ...ap }));
-      bestScore = candidateScore;
-    }
   }
 
-  const bestMetrics = evaluateCoverage(best, walls, target);
-  return { bestAps: best, metrics: bestMetrics };
+  return candidate;
+};
+
+const runGeneticOptimization = (
+  aps: AccessPoint[],
+  walls: Wall[],
+  target: number,
+  populationSize: number,
+  iterations: number,
+) => {
+  const desiredCoverage = 95;
+  const baseIndividual = aps.map(ap => ({ ...ap }));
+  let population: AccessPoint[][] = [baseIndividual];
+
+  for (let i = 1; i < populationSize; i++) {
+    population.push(mutateLayout(baseIndividual));
+  }
+
+  let best = baseIndividual;
+  let { score: bestScore } = evaluateCoverage(best, walls, target, desiredCoverage);
+
+  for (let gen = 0; gen < iterations; gen++) {
+    const evaluated = population
+      .map(layout => ({
+        layout,
+        metrics: evaluateCoverage(layout, walls, target, desiredCoverage)
+      }))
+      .sort((a, b) => a.metrics.score - b.metrics.score);
+
+    if (evaluated[0].metrics.score < bestScore) {
+      best = evaluated[0].layout.map(ap => ({ ...ap }));
+      bestScore = evaluated[0].metrics.score;
+    }
+
+    const elites = evaluated.slice(0, Math.max(2, Math.floor(populationSize * 0.3))).map(e => e.layout);
+    const nextPopulation: AccessPoint[][] = [];
+
+    while (nextPopulation.length < populationSize) {
+      const parent = elites[Math.floor(Math.random() * elites.length)];
+      nextPopulation.push(mutateLayout(parent));
+    }
+
+    population = nextPopulation;
+  }
+
+  const metrics = evaluateCoverage(best, walls, target, desiredCoverage);
+  return { bestAps: best, metrics };
 };
 
 const FloorPlanEditor: React.FC = () => {
@@ -125,6 +188,8 @@ const FloorPlanEditor: React.FC = () => {
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
   const [signalThreshold, setSignalThreshold] = useState(COVERAGE_TARGET_DBM);
+  const [populationSize, setPopulationSize] = useState(12);
+  const [optimizationIterations, setOptimizationIterations] = useState(60);
 
   // Dragging state
   const [isDragging, setIsDragging] = useState(false);
@@ -232,7 +297,7 @@ const FloorPlanEditor: React.FC = () => {
 
   const runOptimization = async () => {
     setIsOptimizing(true);
-    setAiSuggestion('Evaluating layout with simulated annealing...');
+    setAiSuggestion('Evolving candidate layouts for coverage and efficiency...');
 
     if (aps.length === 0) {
       setAiSuggestion('Add at least one access point before running AI optimization.');
@@ -241,11 +306,22 @@ const FloorPlanEditor: React.FC = () => {
     }
 
     const before = evaluateCoverage(aps, walls, signalThreshold);
-    const { bestAps, metrics } = runSimulatedAnnealing(aps, walls, signalThreshold);
+    const { bestAps, metrics } = runGeneticOptimization(
+      aps,
+      walls,
+      signalThreshold,
+      Math.max(4, populationSize),
+      Math.max(10, optimizationIterations)
+    );
     setAps(bestAps);
 
-    let insight = `AI placement updated AP coordinates for stronger coverage.\n` +
-      `Coverage >= ${signalThreshold} dBm: ${before.coveragePercent.toFixed(1)}% → ${metrics.coveragePercent.toFixed(1)}%.`;
+    const coverageDelta = metrics.coveragePercent - before.coveragePercent;
+    const apDelta = metrics.apCount - before.apCount;
+
+    let insight = `Optimization explored adding/removing APs to hit coverage targets while minimizing density.\n` +
+      `Coverage ≥ ${signalThreshold} dBm: ${before.coveragePercent.toFixed(1)}% → ${metrics.coveragePercent.toFixed(1)}% (${coverageDelta >= 0 ? '+' : ''}${coverageDelta.toFixed(1)} pts).\n` +
+      `AP count: ${before.apCount} → ${metrics.apCount} (${apDelta >= 0 ? '+' : ''}${apDelta}).\n` +
+      `Population ${Math.max(4, populationSize)} • Generations ${Math.max(10, optimizationIterations)}.`;
 
     const text = await getOptimizationSuggestions(bestAps, walls);
     if (!text.includes('API Key not configured')) {
@@ -398,6 +474,30 @@ const FloorPlanEditor: React.FC = () => {
         </div>
         
         <div className="mt-auto">
+             <div className="mb-4 bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-600">
+                  <span>Population size</span>
+                  <input
+                    type="number"
+                    min={4}
+                    max={48}
+                    value={populationSize}
+                    onChange={(e) => setPopulationSize(Number(e.target.value))}
+                    className="w-20 border border-slate-200 rounded px-2 py-1 text-right text-sm"
+                  />
+                </div>
+                <div className="flex items-center justify-between text-xs text-slate-600">
+                  <span>Generations</span>
+                  <input
+                    type="number"
+                    min={10}
+                    max={200}
+                    value={optimizationIterations}
+                    onChange={(e) => setOptimizationIterations(Number(e.target.value))}
+                    className="w-20 border border-slate-200 rounded px-2 py-1 text-right text-sm"
+                  />
+                </div>
+             </div>
              <div className="mb-2">
                 <label className="text-xs font-semibold text-slate-600">Signal Threshold ({signalThreshold}dBm)</label>
                 <input
