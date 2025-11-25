@@ -5,7 +5,7 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   defaultSignalProfiles: ['Data', 'Voice', 'Video'],
 };
 
-const DEFAULT_FLOOR_PLAN = {
+export const DEFAULT_FLOOR_PLAN = {
   opacity: 0.6,
   metersPerPixel: 0.6,
 };
@@ -59,77 +59,6 @@ export const DEFAULT_PROJECTS: Project[] = [
   },
 ];
 
-export const MOCK_USERS: UserProfile[] = [
-  { id: '1', name: 'Sarah Chen', email: 'sarah.c@techcorp.com', role: 'Network Engineer', status: 'Active' },
-  { id: '2', name: 'Michael Ross', email: 'mross@techcorp.com', role: 'Viewer', status: 'Active' },
-  { id: '3', name: 'James Wilson', email: 'j.wilson@techcorp.com', role: 'Admin', status: 'Active' },
-];
-
-export const INITIAL_APS: AccessPoint[] = [
-  {
-    id: 'AP-01',
-    x: 200,
-    y: 150,
-    model: 'Wi-Fi 6E Omni',
-    band: '6GHz',
-    power: 20,
-    channel: 'Auto',
-    height: 2.7,
-    azimuth: 0,
-    tilt: 0,
-    antennaGain: 5,
-    antennaPatternFile: 'omni_90deg.ant',
-    color: '#3b82f6'
-  },
-  {
-    id: 'AP-02',
-    x: 600,
-    y: 150,
-    model: 'Wi-Fi 6E Omni',
-    band: '5GHz',
-    power: 20,
-    channel: 36,
-    height: 2.7,
-    azimuth: 0,
-    tilt: 0,
-    antennaGain: 5,
-    antennaPatternFile: 'omni_90deg.ant',
-    color: '#3b82f6'
-  },
-  {
-    id: 'AP-03',
-    x: 400,
-    y: 400,
-    model: 'High Density Panel',
-    band: '5GHz',
-    power: 18,
-    channel: 149,
-    height: 2.5,
-    azimuth: 45,
-    tilt: -5,
-    antennaGain: 9,
-    antennaPatternFile: 'panel_65deg.ant',
-    color: '#f59e0b'
-  },
-];
-
-export const INITIAL_WALLS: Wall[] = [
-  // Outer Box
-  { id: 'w1', x1: 50, y1: 50, x2: 750, y2: 50, material: 'Concrete', attenuation: 12, thickness: 12, height: 3, elevation: 0 },
-  { id: 'w2', x1: 750, y1: 50, x2: 750, y2: 550, material: 'Concrete', attenuation: 12, thickness: 12, height: 3, elevation: 0 },
-  { id: 'w3', x1: 750, y1: 550, x2: 50, y2: 550, material: 'Concrete', attenuation: 12, thickness: 12, height: 3, elevation: 0 },
-  { id: 'w4', x1: 50, y1: 550, x2: 50, y2: 50, material: 'Concrete', attenuation: 12, thickness: 12, height: 3, elevation: 0 },
-  // Inner Rooms
-  { id: 'w5', x1: 50, y1: 250, x2: 300, y2: 250, material: 'Drywall', attenuation: 3, thickness: 8, height: 2.8, elevation: 0 },
-  { id: 'w6', x1: 300, y1: 50, x2: 300, y2: 250, material: 'Glass', attenuation: 2, thickness: 6, height: 2.8, elevation: 0 },
-  { id: 'w7', x1: 500, y1: 350, x2: 750, y2: 350, material: 'Drywall', attenuation: 3, thickness: 8, height: 2.8, elevation: 0 },
-];
-
-export const HARDWARE_TOOLS = [
-  { id: 'h1', name: 'Wi-Fi 6E Omni', icon: 'Router', type: 'ap' },
-  { id: 'h2', name: 'Directional', icon: 'Wifi', type: 'ap' },
-  { id: 'h3', name: 'Outdoor', icon: 'CloudRain', type: 'ap' },
-];
 
 export const ENV_TOOLS = [
   { id: 'brick', name: 'Brick', icon: 'Square', type: 'wall', material: 'Brick', attenuation: 14, thickness: 12, height: 3, elevation: 0, color: '#b45309' },
@@ -137,3 +66,11 @@ export const ENV_TOOLS = [
   { id: 'concrete', name: 'Concrete', icon: 'Square', type: 'wall', material: 'Concrete', attenuation: 12, thickness: 14, height: 3, elevation: 0, color: '#475569' },
   { id: 'glass', name: 'Glass', icon: 'Square', type: 'wall', material: 'Glass', attenuation: 2, thickness: 6, height: 3, elevation: 0, color: '#38bdf8' },
 ];
+
+export const HARDWARE_TOOLS = [
+  { id: 'ap-generic', name: 'Generic AP', icon: 'Wifi', type: 'ap' },
+  { id: 'ap-high-density', name: 'High Density AP', icon: 'Router', type: 'ap' },
+];
+
+export const INITIAL_APS: AccessPoint[] = [];
+export const INITIAL_WALLS: Wall[] = [];

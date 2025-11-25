@@ -1,16 +1,14 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AccessPoint, Wall, FloorPlan, ScaleReference } from '../types';
-import { INITIAL_APS, INITIAL_WALLS, HARDWARE_TOOLS, ENV_TOOLS } from '../constants';
+import { HARDWARE_TOOLS, ENV_TOOLS } from '../constants';
 import HeatmapCanvas from './HeatmapCanvas';
-import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info, Image as ImageIcon, Eye, EyeOff, Ruler } from 'lucide-react';
+import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info, Image as ImageIcon, Eye, EyeOff, Ruler, Move, ZoomIn, ZoomOut, Maximize, X, Wand2 } from 'lucide-react';
 import { getOptimizationSuggestions } from '../services/geminiService';
 import { ANTENNA_PATTERNS, AP_LIBRARY, CHANNEL_OPTIONS } from '../data/apLibrary';
 import { useProjectStore } from '../services/projectStore';
 
-const CANVAS_WIDTH = 800;
-const CANVAS_HEIGHT = 600;
 const COVERAGE_TARGET_DBM = -65;
-const DEFAULT_METERS_PER_PIXEL = 0.6;
+const DEFAULT_METERS_PER_PIXEL = 0.05;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
 
@@ -39,13 +37,15 @@ const evaluateCoverage = (
   aps: AccessPoint[],
   walls: Wall[],
   target: number = COVERAGE_TARGET_DBM,
-  metersPerPixel: number = DEFAULT_METERS_PER_PIXEL
+  metersPerPixel: number = DEFAULT_METERS_PER_PIXEL,
+  width: number,
+  height: number
 ) => {
   const desiredCoverage = 95;
   const gridSpacing = 60;
   const gridPoints: { x: number; y: number }[] = [];
-  for (let x = gridSpacing; x < CANVAS_WIDTH; x += gridSpacing) {
-    for (let y = gridSpacing; y < CANVAS_HEIGHT; y += gridSpacing) {
+  for (let x = gridSpacing; x < width; x += gridSpacing) {
+    for (let y = gridSpacing; y < height; y += gridSpacing) {
       gridPoints.push({ x, y });
     }
   }
@@ -61,8 +61,8 @@ const evaluateCoverage = (
     if (bestSignal >= target) covered += 1;
   });
 
-  const coveragePercent = (covered / gridPoints.length) * 100;
-  const averageSignal = bestSignals.reduce((a, b) => a + b, 0) / bestSignals.length;
+  const coveragePercent = gridPoints.length > 0 ? (covered / gridPoints.length) * 100 : 0;
+  const averageSignal = bestSignals.length > 0 ? bestSignals.reduce((a, b) => a + b, 0) / bestSignals.length : -100;
   const imbalancePenalty = aps.reduce((penalty, ap, idx) => {
     return aps.slice(idx + 1).reduce((inner, other) => {
       const distance = Math.hypot(ap.x - other.x, ap.y - other.y);
@@ -74,18 +74,17 @@ const evaluateCoverage = (
   const apPenalty = aps.length * 2;
   const signalPenalty = Math.max(0, target - averageSignal) * 0.5;
 
-  // Lower is better
   const score = coverageGap * 6 + signalPenalty + imbalancePenalty + apPenalty;
 
   return { coveragePercent, averageSignal, score, apCount: aps.length };
 };
 
-const createRandomAp = () => {
+const createRandomAp = (width: number, height: number) => {
   const template = AP_LIBRARY[0];
   return {
     id: generateApId(),
-    x: clamp(Math.random() * CANVAS_WIDTH, 40, CANVAS_WIDTH - 40),
-    y: clamp(Math.random() * CANVAS_HEIGHT, 40, CANVAS_HEIGHT - 40),
+    x: clamp(Math.random() * width, 40, width - 40),
+    y: clamp(Math.random() * height, 40, height - 40),
     model: template.name,
     band: template.bands[0],
     power: template.defaultPower,
@@ -99,25 +98,22 @@ const createRandomAp = () => {
   } as AccessPoint;
 };
 
-const mutateLayout = (aps: AccessPoint[]) => {
+const mutateLayout = (aps: AccessPoint[], width: number, height: number) => {
   const candidate = aps.map(ap => ({ ...ap }));
   const roll = Math.random();
 
   if (roll < 0.2 && candidate.length > 1) {
-    // Remove an AP
     const removeIndex = Math.floor(Math.random() * candidate.length);
     candidate.splice(removeIndex, 1);
   } else if (roll < 0.4 && candidate.length < 12) {
-    // Add a new AP
-    candidate.push(createRandomAp());
+    candidate.push(createRandomAp(width, height));
   } else {
-    // Move an AP slightly
     const apIndex = Math.floor(Math.random() * candidate.length);
     const jitter = Math.max(8, 80 * Math.random());
     const deltaX = (Math.random() - 0.5) * jitter;
     const deltaY = (Math.random() - 0.5) * jitter;
-    candidate[apIndex].x = clamp(candidate[apIndex].x + deltaX, 40, CANVAS_WIDTH - 40);
-    candidate[apIndex].y = clamp(candidate[apIndex].y + deltaY, 40, CANVAS_HEIGHT - 40);
+    candidate[apIndex].x = clamp(candidate[apIndex].x + deltaX, 40, width - 40);
+    candidate[apIndex].y = clamp(candidate[apIndex].y + deltaY, 40, height - 40);
   }
 
   return candidate;
@@ -128,39 +124,38 @@ const runSimulatedAnnealing = (
   walls: Wall[],
   target: number,
   metersPerPixel: number,
+  width: number,
+  height: number,
   iterations: number = 50
 ) => {
   let current = aps.map(ap => ({ ...ap }));
   let best = current.map(ap => ({ ...ap }));
-  let { score: bestScore } = evaluateCoverage(best, walls, target, metersPerPixel);
-  let { score: currentScore } = evaluateCoverage(current, walls, target, metersPerPixel);
+  let { score: bestScore } = evaluateCoverage(best, walls, target, metersPerPixel, width, height);
+  let { score: currentScore } = evaluateCoverage(current, walls, target, metersPerPixel, width, height);
 
   let temperature = 100;
   const coolingRate = 0.95;
 
   for (let i = 0; i < iterations; i++) {
-    const candidate = mutateLayout(current);
-    const { score: candidateScore } = evaluateCoverage(candidate, walls, target, metersPerPixel);
+    const candidate = mutateLayout(current, width, height);
+    const { score: candidateScore } = evaluateCoverage(candidate, walls, target, metersPerPixel, width, height);
 
-    // Acceptance probability (Metropolis criterion)
     const acceptance = Math.exp((currentScore - candidateScore) / Math.max(temperature, 0.01));
 
     if (candidateScore < currentScore || Math.random() < acceptance) {
       current = candidate;
       currentScore = candidateScore;
 
-      // Track best solution found
       if (currentScore < bestScore) {
         best = current.map(ap => ({ ...ap }));
         bestScore = currentScore;
       }
     }
 
-    // Cool down
     temperature *= coolingRate;
   }
 
-  const bestMetrics = evaluateCoverage(best, walls, target, metersPerPixel);
+  const bestMetrics = evaluateCoverage(best, walls, target, metersPerPixel, width, height);
   return { bestAps: best, metrics: bestMetrics };
 };
 
@@ -171,9 +166,10 @@ const FloorPlanEditor: React.FC = () => {
   const updateProject = useProjectStore((state) => state.updateProject);
   const currentProject = projects.find(project => project.id === selectedProjectId);
 
-  const [aps, setAps] = useState<AccessPoint[]>(INITIAL_APS);
-  const [walls, setWalls] = useState<Wall[]>(INITIAL_WALLS);
+  const [aps, setAps] = useState<AccessPoint[]>([]);
+  const [walls, setWalls] = useState<Wall[]>([]);
   const [selectedApId, setSelectedApId] = useState<string | null>(null);
+  const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
   const [activeEnvToolId, setActiveEnvToolId] = useState<string>(ENV_TOOLS[0]?.id ?? '');
   const [wallAttributes, setWallAttributes] = useState<Wall>(() => ({
     id: 'draft',
@@ -212,10 +208,20 @@ const FloorPlanEditor: React.FC = () => {
   const [populationSize, setPopulationSize] = useState(12);
   const [optimizationIterations, setOptimizationIterations] = useState(30);
 
-  // Dragging state
-  const [isDragging, setIsDragging] = useState(false);
+  const [heatmapConfig, setHeatmapConfig] = useState({
+    colorScale: 'turbo' as 'turbo' | 'viridis' | 'magma',
+    minDbm: -90,
+    maxDbm: -40,
+    coverageThreshold: -65
+  });
+
+  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const [isPanning, setIsPanning] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 2000, height: 2000 });
+
+  const [isDraggingAp, setIsDraggingAp] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
-  const editorRef = useRef<HTMLDivElement>(null);
   const [draftWall, setDraftWall] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
   const selectedProject = useMemo(
@@ -228,6 +234,15 @@ const FloorPlanEditor: React.FC = () => {
       setSelectedProjectId(projects[0].id);
     }
   }, [projects, selectedProjectId, setSelectedProjectId]);
+
+  useEffect(() => {
+    if (floorPlan.width && floorPlan.height) {
+      setCanvasSize({
+        width: Math.max(2000, floorPlan.width + 1000),
+        height: Math.max(2000, floorPlan.height + 1000)
+      });
+    }
+  }, [floorPlan.width, floorPlan.height]);
 
   const persistFloorPlan = (updates: Partial<FloorPlan>) => {
     const newFloorPlan = { ...floorPlan, ...updates };
@@ -243,6 +258,17 @@ const FloorPlanEditor: React.FC = () => {
   const updateSelectedAp = (updates: Partial<AccessPoint>) => {
     if (!selectedApId) return;
     setAps(prev => prev.map(ap => ap.id === selectedApId ? { ...ap, ...updates } : ap));
+  };
+
+  const deleteSelected = () => {
+    if (selectedApId) {
+      setAps(aps.filter(ap => ap.id !== selectedApId));
+      setSelectedApId(null);
+    }
+    if (selectedWallId) {
+      setWalls(walls.filter(w => w.id !== selectedWallId));
+      setSelectedWallId(null);
+    }
   };
 
   const handleFloorPlanUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -261,6 +287,11 @@ const FloorPlanEditor: React.FC = () => {
           height: img.height,
         });
         setShowFloorPlan(true);
+        setTransform({
+          x: (containerRef.current?.clientWidth ?? 800) / 2 - img.width / 2,
+          y: (containerRef.current?.clientHeight ?? 600) / 2 - img.height / 2,
+          scale: 1
+        });
       };
       img.src = dataUrl;
     };
@@ -286,107 +317,161 @@ const FloorPlanEditor: React.FC = () => {
     applyScaleFromInput(value);
   };
 
-  const handleMouseDown = (e: React.MouseEvent, id: string, type: 'ap') => {
+  const screenToCanvas = (screenX: number, screenY: number) => {
+    if (!containerRef.current) return { x: 0, y: 0 };
+    const rect = containerRef.current.getBoundingClientRect();
+    return {
+      x: (screenX - rect.left - transform.x) / transform.scale,
+      y: (screenY - rect.top - transform.y) / transform.scale
+    };
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const zoomSensitivity = 0.001;
+      const delta = -e.deltaY * zoomSensitivity;
+      const newScale = clamp(transform.scale + delta, 0.1, 5);
+
+      const rect = containerRef.current!.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const scaleRatio = newScale / transform.scale;
+      const newX = mouseX - (mouseX - transform.x) * scaleRatio;
+      const newY = mouseY - (mouseY - transform.y) * scaleRatio;
+
+      setTransform({ x: newX, y: newY, scale: newScale });
+    } else {
+      setTransform(prev => ({
+        ...prev,
+        x: prev.x - e.deltaX,
+        y: prev.y - e.deltaY
+      }));
+    }
+  };
+
+  const handleMouseDown = (e: React.MouseEvent, id?: string, type?: 'ap' | 'wall') => {
     e.stopPropagation();
-    if (type === 'ap') {
+
+    if (e.button === 1 || (e.button === 0 && e.nativeEvent.getModifierState('Space'))) {
+      setIsPanning(true);
+      return;
+    }
+
+    const { x, y } = screenToCanvas(e.clientX, e.clientY);
+
+    if (type === 'ap' && id) {
       setSelectedApId(id);
-      setIsDragging(true);
+      setSelectedWallId(null);
+      setIsDraggingAp(true);
       const ap = aps.find(a => a.id === id);
-      if (ap && editorRef.current) {
-        const rect = editorRef.current.getBoundingClientRect();
+      if (ap) {
         dragOffset.current = {
-          x: e.clientX - rect.left - ap.x,
-          y: e.clientY - rect.top - ap.y
+          x: x - ap.x,
+          y: y - ap.y
         };
       }
+    } else if (type === 'wall' && id) {
+      setSelectedWallId(id);
+      setSelectedApId(null);
+    } else if (isDrawingScale) {
+      setDraftScaleLine({ x1: x, y1: y, x2: x, y2: y });
+    } else if (activeEnvToolId) {
+      setDraftWall({ x1: x, y1: y, x2: x, y2: y });
+      setSelectedWallId(null);
+      setSelectedApId(null);
+    } else {
+      setSelectedWallId(null);
+      setSelectedApId(null);
     }
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDragging && selectedApId && editorRef.current) {
-      const rect = editorRef.current.getBoundingClientRect();
-      const newX = e.clientX - rect.left - dragOffset.current.x;
-      const newY = e.clientY - rect.top - dragOffset.current.y;
-      
-      // Boundary checks
-      const clampedX = Math.max(0, Math.min(newX, rect.width - 40));
-      const clampedY = Math.max(0, Math.min(newY, rect.height - 40));
+    const { x, y } = screenToCanvas(e.clientX, e.clientY);
 
-      setAps(prev => prev.map(ap => ap.id === selectedApId ? { ...ap, x: clampedX, y: clampedY } : ap));
-    } else if (draftScaleLine && editorRef.current && isDrawingScale) {
-      const rect = editorRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
+    if (isPanning) {
+      setTransform(prev => ({
+        ...prev,
+        x: prev.x + e.movementX,
+        y: prev.y + e.movementY
+      }));
+      return;
+    }
+
+    if (isDraggingAp && selectedApId && dragOffset.current) {
+      setAps(prev => prev.map(ap => {
+        if (ap.id === selectedApId) {
+          return {
+            ...ap,
+            x: x - dragOffset.current!.x,
+            y: y - dragOffset.current!.y
+          };
+        }
+        return ap;
+      }));
+      return;
+    }
+
+    if (isDrawingScale && draftScaleLine) {
       setDraftScaleLine(prev => prev ? { ...prev, x2: x, y2: y } : null);
-    } else if (draftWall && editorRef.current) {
-      const rect = editorRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      setDraftWall(prev => prev ? { ...prev, x2: x, y2: y } : null);
+      return;
+    }
+
+    if (activeEnvToolId && draftWall) {
+      let targetX = x;
+      let targetY = y;
+
+      if (e.shiftKey) {
+        const dx = Math.abs(x - draftWall.x1);
+        const dy = Math.abs(y - draftWall.y1);
+        if (dx > dy) targetY = draftWall.y1;
+        else targetX = draftWall.x1;
+      }
+
+      setDraftWall(prev => prev ? { ...prev, x2: targetX, y2: targetY } : null);
     }
   };
 
   const handleMouseUp = () => {
-    setIsDragging(false);
-    if (draftScaleLine && isDrawingScale) {
-      const pixelLength = Math.hypot(draftScaleLine.x2 - draftScaleLine.x1, draftScaleLine.y2 - draftScaleLine.y1);
-      const reference: ScaleReference = {
+    setIsPanning(false);
+    setIsDraggingAp(false);
+    dragOffset.current = null;
+
+    if (isDrawingScale && draftScaleLine) {
+      setScaleLine({
         ...draftScaleLine,
-        pixelLength,
-        distanceMeters: scaleInputMeters || scaleLine?.distanceMeters || 0,
-      };
-      setScaleLine(reference);
-      if (scaleInputMeters > 0 && pixelLength > 0) {
-        applyScaleFromInput(scaleInputMeters, reference);
-      } else {
-        persistFloorPlan({ reference });
-      }
+        distanceMeters: 0
+      });
       setDraftScaleLine(null);
       setIsDrawingScale(false);
-      return;
     }
 
-    if (draftWall) {
+    if (activeEnvToolId && draftWall) {
       const newWall: Wall = {
         ...wallAttributes,
         ...draftWall,
         id: `W-${Date.now().toString().slice(-4)}`,
-        metadata: {
-          ...wallAttributes.metadata,
-        }
+        metadata: { ...wallAttributes.metadata }
       };
 
-      // Ignore tiny drags
-      const distance = Math.hypot(draftWall.x2 - draftWall.x1, draftWall.y2 - draftWall.y1);
-      if (distance > 4) {
+      const len = Math.hypot(newWall.x2 - newWall.x1, newWall.y2 - newWall.y1);
+      if (len > 0.1) {
         setWalls(prev => [...prev, newWall]);
       }
       setDraftWall(null);
     }
   };
 
-  const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    if (!editorRef.current || isDragging) return;
-    const rect = editorRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    if (isDrawingScale) {
-      setDraftScaleLine({ x1: x, y1: y, x2: x, y2: y });
-      return;
-    }
-
-    if (!activeEnvToolId) return;
-
-    setDraftWall({ x1: x, y1: y, x2: x, y2: y });
-  };
-
   const addAp = () => {
     const template = AP_LIBRARY[0];
+    const centerX = (-transform.x + (containerRef.current?.clientWidth ?? 800) / 2) / transform.scale;
+    const centerY = (-transform.y + (containerRef.current?.clientHeight ?? 600) / 2) / transform.scale;
+
     const newAp: AccessPoint = {
       id: `AP-${Date.now().toString().slice(-4)}`,
-      x: 350,
-      y: 250,
+      x: centerX,
+      y: centerY,
       model: template.name,
       band: template.bands[0],
       power: template.defaultPower,
@@ -398,29 +483,25 @@ const FloorPlanEditor: React.FC = () => {
       antennaPatternFile: template.patternFile,
       color: '#3b82f6'
     };
-    setAps([...aps, newAp]);
-    setSelectedApId(newAp.id);
-  };
 
-  const deleteSelected = () => {
-    if (selectedApId) {
-      setAps(aps.filter(ap => ap.id !== selectedApId));
-      setSelectedApId(null);
-    }
+    setAps(prev => [...prev, newAp]);
+    setSelectedApId(newAp.id);
+    setSelectedWallId(null);
   };
 
   const runOptimization = async () => {
-    setIsOptimizing(true);
-    setAiSuggestion('Evolving candidate layouts for coverage and efficiency...');
-
     if (aps.length === 0) {
       setAiSuggestion('Add at least one access point before running AI optimization.');
-      setIsOptimizing(false);
       return;
     }
 
-    const before = evaluateCoverage(aps, walls, signalThreshold, metersPerPixel);
-    const { bestAps, metrics } = runSimulatedAnnealing(aps, walls, signalThreshold, metersPerPixel);
+    setIsOptimizing(true);
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    const before = evaluateCoverage(aps, walls, signalThreshold, metersPerPixel || DEFAULT_METERS_PER_PIXEL, canvasSize.width, canvasSize.height);
+    const { bestAps, metrics } = runSimulatedAnnealing(aps, walls, signalThreshold, metersPerPixel || DEFAULT_METERS_PER_PIXEL, canvasSize.width, canvasSize.height);
+
     setAps(bestAps);
 
     const coverageDelta = metrics.coveragePercent - before.coveragePercent;
@@ -428,22 +509,41 @@ const FloorPlanEditor: React.FC = () => {
 
     let insight = `Optimization explored adding/removing APs to hit coverage targets while minimizing density.\n` +
       `Coverage ≥ ${signalThreshold} dBm: ${before.coveragePercent.toFixed(1)}% → ${metrics.coveragePercent.toFixed(1)}% (${coverageDelta >= 0 ? '+' : ''}${coverageDelta.toFixed(1)} pts).\n` +
-      `AP count: ${before.apCount} → ${metrics.apCount} (${apDelta >= 0 ? '+' : ''}${apDelta}).\n` +
-      `Population ${Math.max(4, populationSize)} • Generations ${Math.max(10, optimizationIterations)}.`;
+      `AP count: ${before.apCount} → ${metrics.apCount} (${apDelta >= 0 ? '+' : ''}${apDelta}).`;
 
-    const text = await getOptimizationSuggestions(bestAps, walls);
-    if (!text.includes('API Key not configured')) {
-      insight += `\n\nGemini notes:\n${text}`;
+    try {
+      const text = await getOptimizationSuggestions(bestAps, walls);
+      if (text && !text.includes('API Key not configured')) {
+        insight += `\n\nGemini notes:\n${text}`;
+      }
+    } catch (e) {
+      console.error("AI suggestion failed", e);
     }
 
     setAiSuggestion(insight);
     setIsOptimizing(false);
   };
 
+  const handleAutoDetectWalls = async () => {
+    if (!floorPlan.imageDataUrl) return;
+
+    try {
+      const { detectWalls } = await import('../services/wallDetection');
+      const detected = await detectWalls(floorPlan.imageDataUrl, metersPerPixel || DEFAULT_METERS_PER_PIXEL);
+      setWalls(prev => [...prev, ...detected]);
+      alert(`Detected ${detected.length} walls!`);
+    } catch (e) {
+      console.error("Wall detection failed", e);
+      alert("Failed to detect walls. Please try a cleaner image.");
+    }
+  };
+
   const selectedAp = aps.find(a => a.id === selectedApId);
+  const selectedWall = walls.find(w => w.id === selectedWallId);
+
   const activeScaleOverlay = draftScaleLine ?? scaleLine;
-  const activeScalePixelLength: number = activeScaleOverlay 
-    ? ('pixelLength' in activeScaleOverlay 
+  const activeScalePixelLength: number = activeScaleOverlay
+    ? ('pixelLength' in activeScaleOverlay
       ? (activeScaleOverlay.pixelLength as number)
       : Math.hypot(activeScaleOverlay.x2 - activeScaleOverlay.x1, activeScaleOverlay.y2 - activeScaleOverlay.y1))
     : 0;
@@ -473,9 +573,9 @@ const FloorPlanEditor: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full" onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
+    <div className="flex h-full overflow-hidden" onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
       {/* Left Toolbar */}
-      <div className="w-64 bg-white border-r border-slate-200 p-4 flex flex-col gap-6 overflow-y-auto shrink-0">
+      <div className="w-64 bg-white border-r border-slate-200 p-4 flex flex-col gap-6 overflow-y-auto shrink-0 z-20 shadow-sm">
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
           <p className="text-[11px] font-semibold text-slate-600 mb-2">Active Project</p>
           <select
@@ -490,20 +590,6 @@ const FloorPlanEditor: React.FC = () => {
               </option>
             ))}
           </select>
-          {selectedProject && (
-            <div className="mt-2 text-[11px] text-slate-600 space-y-1">
-              <div className="flex justify-between">
-                <span>Units</span>
-                <span className="font-semibold text-slate-800">{selectedProject.settings.units}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Signal Profiles</span>
-                <span className="text-right text-slate-700 truncate max-w-[120px]">
-                  {selectedProject.settings.defaultSignalProfiles.join(', ')}
-                </span>
-              </div>
-            </div>
-          )}
         </div>
 
         <div>
@@ -512,7 +598,7 @@ const FloorPlanEditor: React.FC = () => {
             {HARDWARE_TOOLS.map(tool => (
               <button key={tool.id} onClick={addAp} className="flex flex-col items-center justify-center p-3 border border-slate-200 rounded-lg hover:bg-slate-50 hover:border-blue-500 transition-colors text-slate-600">
                 <div className="mb-2 text-blue-600">
-                   {tool.icon === 'Router' ? <Router size={20} /> : tool.icon === 'Wifi' ? <Wifi size={20} /> : <Router size={20} />}
+                  {tool.icon === 'Router' ? <Router size={20} /> : tool.icon === 'Wifi' ? <Wifi size={20} /> : <Router size={20} />}
                 </div>
                 <span className="text-[10px] text-center leading-tight">{tool.name}</span>
               </button>
@@ -523,39 +609,32 @@ const FloorPlanEditor: React.FC = () => {
         <div>
           <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Floor Plan</h3>
           <div className="space-y-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
-            <label className="flex items-center justify-between text-sm text-slate-700">
-              <span className="flex items-center gap-2"><ImageIcon size={16} /> Upload (PNG/JPEG/SVG)</span>
+            <label className="flex items-center justify-between text-sm text-slate-700 cursor-pointer hover:text-blue-600 transition-colors">
+              <span className="flex items-center gap-2"><ImageIcon size={16} /> Upload Image</span>
               <input
                 type="file"
                 accept="image/png,image/jpeg,image/svg+xml"
                 onChange={handleFloorPlanUpload}
-                className="text-xs text-slate-500"
+                className="hidden"
               />
             </label>
             {floorPlan.imageName ? (
               <div className="text-xs text-slate-600 bg-white border border-slate-200 rounded px-2 py-1 flex items-center justify-between">
-                <span className="truncate" title={floorPlan.imageName}>Loaded: {floorPlan.imageName}</span>
+                <span className="truncate max-w-[120px]" title={floorPlan.imageName}>{floorPlan.imageName}</span>
                 <button onClick={clearFloorPlanImage} className="text-red-500 hover:text-red-600 text-[11px]">Remove</button>
               </div>
             ) : (
-              <div className="text-xs text-slate-500">No image loaded</div>
+              <div className="text-xs text-slate-500 italic">No floor plan loaded</div>
             )}
-            <div className="flex items-center justify-between text-sm text-slate-700">
-              <span className="flex items-center gap-2">
-                {showFloorPlan ? <Eye size={14} className="text-blue-500" /> : <EyeOff size={14} className="text-slate-400" />}
-                Floor plan layer
-              </span>
-              <label className="inline-flex items-center gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={showFloorPlan}
-                  onChange={(e) => setShowFloorPlan(e.target.checked)}
-                  className="rounded text-blue-600"
-                  disabled={!floorPlan.imageDataUrl}
-                />
-                Show
-              </label>
-            </div>
+
+            <button
+              onClick={handleAutoDetectWalls}
+              disabled={!floorPlan.imageDataUrl}
+              className="w-full flex items-center justify-center gap-2 px-2 py-1.5 bg-blue-100 text-blue-700 rounded text-xs font-medium hover:bg-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Wand2 size={12} /> Auto-Detect Walls
+            </button>
+
             <div className="space-y-1">
               <label className="flex items-center justify-between text-[11px] text-slate-600">
                 <span>Opacity</span>
@@ -590,10 +669,7 @@ const FloorPlanEditor: React.FC = () => {
                     thickness: tool.thickness,
                     height: tool.height,
                     elevation: tool.elevation,
-                    metadata: {
-                      ...prev.metadata,
-                      color: tool.color
-                    }
+                    metadata: { ...prev.metadata, color: tool.color }
                   }));
                 }}
                 className={`flex flex-col items-center justify-center p-2 border rounded-lg transition-colors text-slate-600 ${activeEnvToolId === tool.id ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 hover:bg-slate-50'}`}
@@ -604,497 +680,435 @@ const FloorPlanEditor: React.FC = () => {
               </button>
             ))}
           </div>
-          <div className="mt-3 space-y-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
-            <div className="flex justify-between text-[11px] text-slate-600">
-              <span>Material</span>
-              <span className="font-semibold text-slate-800">{wallAttributes.material}</span>
+        </div>
+
+        <div>
+          <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Heatmap Settings</h3>
+          <div className="space-y-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-slate-600">Color Scale</label>
+              <select
+                value={heatmapConfig.colorScale}
+                onChange={(e) => setHeatmapConfig(prev => ({ ...prev, colorScale: e.target.value as any }))}
+                className="w-full border border-slate-200 rounded px-2 py-1 text-xs"
+              >
+                <option value="turbo">Turbo</option>
+                <option value="viridis">Viridis</option>
+                <option value="magma">Magma</option>
+              </select>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600">
-              <label className="flex flex-col gap-1">
-                <span>Attenuation (dB)</span>
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-slate-600">Range ({heatmapConfig.minDbm} to {heatmapConfig.maxDbm} dBm)</label>
+              <div className="flex gap-2">
                 <input
                   type="number"
-                  className="border border-slate-200 rounded px-2 py-1 text-sm"
-                  value={wallAttributes.attenuation}
-                  onChange={e => setWallAttributes(prev => ({ ...prev, attenuation: Number(e.target.value) }))}
+                  value={heatmapConfig.minDbm}
+                  onChange={(e) => setHeatmapConfig(prev => ({ ...prev, minDbm: Number(e.target.value) }))}
+                  className="w-full border border-slate-200 rounded px-2 py-1 text-xs"
                 />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span>Thickness (px)</span>
                 <input
                   type="number"
-                  className="border border-slate-200 rounded px-2 py-1 text-sm"
-                  value={wallAttributes.thickness}
-                  onChange={e => setWallAttributes(prev => ({ ...prev, thickness: Number(e.target.value) }))}
+                  value={heatmapConfig.maxDbm}
+                  onChange={(e) => setHeatmapConfig(prev => ({ ...prev, maxDbm: Number(e.target.value) }))}
+                  className="w-full border border-slate-200 rounded px-2 py-1 text-xs"
                 />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span>Height (m)</span>
-                <input
-                  type="number"
-                  className="border border-slate-200 rounded px-2 py-1 text-sm"
-                  value={wallAttributes.height}
-                  onChange={e => setWallAttributes(prev => ({ ...prev, height: Number(e.target.value) }))}
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span>Elevation (m)</span>
-                <input
-                  type="number"
-                  className="border border-slate-200 rounded px-2 py-1 text-sm"
-                  value={wallAttributes.elevation}
-                  onChange={e => setWallAttributes(prev => ({ ...prev, elevation: Number(e.target.value) }))}
-                />
-              </label>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-slate-600">Coverage Cutoff ({heatmapConfig.coverageThreshold} dBm)</label>
+              <input
+                type="range"
+                min="-95"
+                max="-40"
+                value={heatmapConfig.coverageThreshold}
+                onChange={(e) => setHeatmapConfig(prev => ({ ...prev, coverageThreshold: Number(e.target.value) }))}
+                className="w-full accent-blue-500"
+              />
             </div>
           </div>
         </div>
 
         <div>
-          <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Layers</h3>
-          <div className="space-y-2">
-            <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
-              <input
-                type="checkbox"
-                className="rounded text-blue-600 focus:ring-blue-500"
-                checked={!!floorPlan.imageDataUrl && showFloorPlan}
-                onChange={(e) => setShowFloorPlan(e.target.checked)}
-                disabled={!floorPlan.imageDataUrl}
-              />
-              <span>Floor Plan</span>
-              {floorPlan.imageDataUrl && (
-                <span className="text-[11px] text-slate-500">{Math.round((floorPlan.opacity ?? 0.6) * 100)}%</span>
-              )}
-            </label>
-            <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
-              <input
-                type="checkbox"
-                className="rounded text-blue-600 focus:ring-blue-500"
-                checked={showHeatmap}
-                onChange={(e) => setShowHeatmap(e.target.checked)}
-              />
-              <span>Heatmap (Signal)</span>
-            </label>
-            <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
-              <input type="checkbox" className="rounded text-blue-600 focus:ring-blue-500" checked onChange={()=>{}} />
-              <span>AP Placement</span>
-            </label>
-          </div>
-        </div>
-
-        <div>
-          <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Scale & Units</h3>
+          <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Scale</h3>
           <div className="space-y-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
             <button
               onClick={() => { setIsDrawingScale(true); setDraftScaleLine(null); }}
               className={`w-full flex items-center justify-center gap-2 text-xs font-semibold rounded-md px-3 py-2 border ${isDrawingScale ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-700 hover:bg-white'}`}
             >
-              <Ruler size={14} /> {isDrawingScale ? 'Click & drag reference line' : 'Draw reference line'}
+              <Ruler size={14} /> {isDrawingScale ? 'Draw Reference' : 'Set Scale'}
             </button>
-            {scaleLine && (
-              <div className="text-[11px] text-slate-600 bg-white border border-slate-200 rounded px-2 py-1 flex justify-between">
-                <span>Pixels</span>
-                <span className="font-semibold text-slate-800">{(scaleLine.pixelLength ?? 0).toFixed(1)} px</span>
-              </div>
-            )}
-            <label className="text-xs text-slate-600 space-y-1 block">
-              <span>Reference length (meters)</span>
-              <input
-                type="number"
-                value={scaleInputMeters || ''}
-                onChange={(e) => handleScaleInputChange(Number(e.target.value))}
-                placeholder="e.g. 10"
-                className="w-full border border-slate-200 rounded px-2 py-1 text-sm"
-              />
-            </label>
             <div className="text-[11px] text-slate-600 flex items-center justify-between">
-              <span>Meters per pixel</span>
+              <span>Scale</span>
               <span className="font-semibold text-slate-800">{(metersPerPixel || DEFAULT_METERS_PER_PIXEL).toFixed(3)} m/px</span>
             </div>
-          </div>
-        </div>
-        
-        <div className="mt-auto">
-             <div className="mb-4 bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
-                <div className="flex items-center justify-between text-xs text-slate-600">
-                  <span>Population size</span>
-                  <input
-                    type="number"
-                    min={4}
-                    max={48}
-                    value={populationSize}
-                    onChange={(e) => setPopulationSize(Number(e.target.value))}
-                    className="w-20 border border-slate-200 rounded px-2 py-1 text-right text-sm"
-                  />
-                </div>
-                <div className="flex items-center justify-between text-xs text-slate-600">
-                  <span>Generations</span>
-                  <input
-                    type="number"
-                    min={10}
-                    max={200}
-                    value={optimizationIterations}
-                    onChange={(e) => setOptimizationIterations(Number(e.target.value))}
-                    className="w-20 border border-slate-200 rounded px-2 py-1 text-right text-sm"
-                  />
-                </div>
-             </div>
-             <div className="mb-2">
-                <label className="text-xs font-semibold text-slate-600">Signal Threshold ({signalThreshold}dBm)</label>
+            {scaleLine && (
+              <div className="flex gap-2 items-center">
                 <input
-                  type="range"
-                  min="-90"
-                  max="-40"
-                  step="1"
-                  value={signalThreshold}
-                  onChange={(e) => setSignalThreshold(Number(e.target.value))}
-                  className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer mt-2"
+                  type="number"
+                  value={scaleInputMeters || ''}
+                  onChange={(e) => handleScaleInputChange(Number(e.target.value))}
+                  placeholder="Distance (m)"
+                  className="w-full border border-slate-200 rounded px-2 py-1 text-xs"
                 />
-             </div>
-             <button
-              onClick={runOptimization}
-              disabled={isOptimizing}
-              className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium flex items-center justify-center gap-2 transition-all">
-               {isOptimizing ? <Loader2 className="animate-spin" size={16}/> : "Run AI Optimization"}
-             </button>
+                <span className="text-xs text-slate-500">m</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Main Editor Area */}
-      <div className="flex-1 bg-slate-100 p-8 overflow-hidden relative flex flex-col">
-        {/* Editor Toolbar */}
-        <div className="absolute top-6 right-8 z-10 bg-white rounded-lg shadow-sm border border-slate-200 p-1 flex gap-1">
-            <button className="p-2 hover:bg-slate-100 rounded text-slate-600"><Wifi size={18}/></button>
+      <div className="flex-1 bg-slate-100 relative overflow-hidden flex flex-col">
+        {/* Top Toolbar */}
+        <div className="absolute top-4 left-4 right-4 z-10 flex justify-between pointer-events-none">
+          <div className="pointer-events-auto bg-white rounded-lg shadow-sm border border-slate-200 p-1 flex gap-1">
+            <button
+              onClick={() => setTransform(prev => ({ ...prev, scale: prev.scale * 1.2 }))}
+              className="p-2 hover:bg-slate-100 rounded text-slate-600" title="Zoom In"
+            >
+              <ZoomIn size={18} />
+            </button>
+            <button
+              onClick={() => setTransform(prev => ({ ...prev, scale: prev.scale / 1.2 }))}
+              className="p-2 hover:bg-slate-100 rounded text-slate-600" title="Zoom Out"
+            >
+              <ZoomOut size={18} />
+            </button>
+            <button
+              onClick={() => setTransform({ x: 0, y: 0, scale: 1 })}
+              className="p-2 hover:bg-slate-100 rounded text-slate-600" title="Reset View"
+            >
+              <Maximize size={18} />
+            </button>
+          </div>
+
+          <div className="pointer-events-auto bg-white rounded-lg shadow-sm border border-slate-200 p-1 flex gap-1">
+            <label className="flex items-center gap-2 px-3 py-1 text-xs text-slate-700 cursor-pointer hover:bg-slate-50 rounded">
+              <input type="checkbox" checked={showFloorPlan} onChange={(e) => setShowFloorPlan(e.target.checked)} className="rounded text-blue-600" />
+              <Eye size={14} /> Floor Plan
+            </label>
             <div className="w-px bg-slate-200 my-1"></div>
-            <button className="p-2 hover:bg-slate-100 rounded text-slate-600"><Edit3 size={18}/></button>
+            <label className="flex items-center gap-2 px-3 py-1 text-xs text-slate-700 cursor-pointer hover:bg-slate-50 rounded">
+              <input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} className="rounded text-blue-600" />
+              <Wifi size={14} /> Heatmap
+            </label>
+          </div>
         </div>
 
-        {/* AI Insight Popup */}
-        {aiSuggestion && (
-           <div className="absolute bottom-8 left-8 right-8 z-20 bg-white rounded-xl shadow-xl border border-blue-100 p-4 animate-in slide-in-from-bottom-5 fade-in duration-300">
+        {/* Canvas Container */}
+        <div
+          ref={containerRef}
+          className="flex-1 relative overflow-hidden cursor-crosshair bg-slate-100"
+          onWheel={handleWheel}
+          onMouseDown={(e) => handleMouseDown(e)}
+          onMouseMove={handleMouseMove}
+          style={{ cursor: isPanning ? 'grabbing' : isDraggingAp ? 'move' : 'crosshair' }}
+        >
+          {/* Grid Background */}
+          <div className="absolute inset-0 z-0 opacity-10 pointer-events-none"
+            style={{
+              backgroundImage: 'radial-gradient(#64748b 1px, transparent 1px)',
+              backgroundSize: `${20 * transform.scale}px ${20 * transform.scale}px`,
+              backgroundPosition: `${transform.x}px ${transform.y}px`
+            }}>
+          </div>
+
+          {/* Transformed Content */}
+          <div
+            style={{
+              transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+              transformOrigin: '0 0',
+              width: canvasSize.width,
+              height: canvasSize.height,
+              position: 'absolute',
+              top: 0,
+              left: 0
+            }}
+          >
+            {/* Floor Plan Image */}
+            {floorPlan.imageDataUrl && showFloorPlan && (
+              <img
+                src={floorPlan.imageDataUrl}
+                alt="Floor plan"
+                className="absolute top-0 left-0 pointer-events-none select-none"
+                style={{ opacity: floorPlan.opacity ?? 0.6 }}
+                draggable={false}
+              />
+            )}
+
+            {/* Heatmap Layer */}
+            <HeatmapCanvas
+              aps={aps}
+              walls={walls}
+              width={canvasSize.width}
+              height={canvasSize.height}
+              show={showHeatmap}
+              metersPerPixel={metersPerPixel || DEFAULT_METERS_PER_PIXEL}
+              colorScale={heatmapConfig.colorScale}
+              minDbm={heatmapConfig.minDbm}
+              maxDbm={heatmapConfig.maxDbm}
+              coverageThreshold={heatmapConfig.coverageThreshold}
+            />
+
+            {/* Walls Layer */}
+            {[...walls, draftWall && { ...wallAttributes, id: 'draft', ...draftWall }].filter(Boolean).map((wall, idx) => {
+              const typedWall = wall as Wall;
+              const style = materialStyles[typedWall.material];
+              const dx = typedWall.x2 - typedWall.x1;
+              const dy = typedWall.y2 - typedWall.y1;
+              const isVertical = Math.abs(dx) < Math.abs(dy);
+              const width = isVertical ? typedWall.thickness : Math.max(Math.abs(dx), 1);
+              const height = isVertical ? Math.max(Math.abs(dy), 1) : typedWall.thickness;
+              const left = Math.min(typedWall.x1, typedWall.x2) - (isVertical ? typedWall.thickness / 2 : 0);
+              const top = Math.min(typedWall.y1, typedWall.y2) - (!isVertical ? typedWall.thickness / 2 : 0);
+              const isSelected = selectedWallId === typedWall.id;
+
+              return (
+                <div
+                  key={`${typedWall.id}-${idx}`}
+                  onMouseDown={(e) => handleMouseDown(e, typedWall.id, 'wall')}
+                  className={`absolute z-10 rounded-sm cursor-pointer transition-all ${typedWall.id === 'draft' ? 'opacity-60 border border-dashed border-blue-400' : ''} ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1 z-20' : ''}`}
+                  style={{
+                    left,
+                    top,
+                    width,
+                    height,
+                    backgroundColor: style?.color ?? '#cbd5e1',
+                    backgroundImage: style?.pattern,
+                    boxShadow: style?.shadow,
+                    transform: `rotate(${Math.atan2(dy, dx)}rad)`
+                  }}
+                />
+              );
+            })}
+
+            {/* APs Layer */}
+            {aps.map(ap => (
+              <div
+                key={ap.id}
+                onMouseDown={(e) => handleMouseDown(e, ap.id, 'ap')}
+                className={`absolute z-20 flex flex-col items-center justify-center transform -translate-x-1/2 -translate-y-1/2 cursor-move group transition-transform ${selectedApId === ap.id ? 'scale-110' : ''}`}
+                style={{ left: ap.x, top: ap.y }}
+              >
+                {selectedApId === ap.id && (
+                  <div className="absolute w-24 h-24 border border-blue-400 rounded-full opacity-30 animate-ping pointer-events-none"></div>
+                )}
+                <div className={`w-8 h-8 rounded-full bg-white shadow-md border-2 flex items-center justify-center relative ${selectedApId === ap.id ? 'border-blue-500' : 'border-slate-300'}`} style={{ backgroundColor: ap.color }}>
+                  <Wifi size={16} className={selectedApId === ap.id ? 'text-blue-600' : 'text-slate-500'} />
+                </div>
+                {/* Hover Info */}
+                <div className="absolute top-full mt-1 opacity-0 group-hover:opacity-100 transition-opacity bg-black/75 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap pointer-events-none">
+                  {ap.model}
+                </div>
+              </div>
+            ))}
+
+            {/* Scale Overlay */}
+            {activeScaleOverlay && (
+              <svg className="absolute top-0 left-0 z-30 pointer-events-none overflow-visible" width={canvasSize.width} height={canvasSize.height}>
+                <line
+                  x1={activeScaleOverlay.x1}
+                  y1={activeScaleOverlay.y1}
+                  x2={activeScaleOverlay.x2}
+                  y2={activeScaleOverlay.y2}
+                  stroke="#0ea5e9"
+                  strokeWidth={2 / transform.scale}
+                  strokeDasharray={draftScaleLine ? '4 4' : '0'}
+                />
+                <circle cx={activeScaleOverlay.x1} cy={activeScaleOverlay.y1} r={4 / transform.scale} fill="#0ea5e9" />
+                <circle cx={activeScaleOverlay.x2} cy={activeScaleOverlay.y2} r={4 / transform.scale} fill="#0ea5e9" />
+                <text
+                  x={(activeScaleOverlay.x1 + activeScaleOverlay.x2) / 2}
+                  y={(activeScaleOverlay.y1 + activeScaleOverlay.y2) / 2 - 10 / transform.scale}
+                  fill="#0f172a"
+                  fontSize={12 / transform.scale}
+                  textAnchor="middle"
+                  fontWeight={600}
+                  style={{ textShadow: '0 0 2px white' }}
+                >
+                  {(scaleMetersLabel ? `${scaleMetersLabel.toFixed(2)} m` : `${activeScalePixelLength.toFixed(1)} px`)}
+                </text>
+              </svg>
+            )}
+          </div>
+
+          {/* Floating Property Inspectors */}
+          {selectedAp && (
+            <div className="absolute top-4 right-4 w-64 bg-white rounded-lg shadow-lg border border-slate-200 p-4 z-40 animate-in slide-in-from-right-5 fade-in duration-200">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-xs font-bold text-slate-500 uppercase">Access Point</h3>
+                <button onClick={() => setSelectedApId(null)} className="text-slate-400 hover:text-slate-600"><X size={14} /></button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">ID</span>
+                  <span className="text-slate-800 font-mono text-xs">{selectedAp.id}</span>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-500">Model</label>
+                  <select
+                    className="w-full border border-slate-200 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={selectedAp.model}
+                    onChange={(e) => {
+                      const model = AP_LIBRARY.find(m => m.name === e.target.value);
+                      if (model) {
+                        updateSelectedAp({
+                          model: model.name,
+                          band: model.bands[0],
+                          power: model.defaultPower,
+                          height: model.defaultHeight,
+                          azimuth: model.defaultAzimuth ?? 0,
+                          tilt: model.defaultTilt ?? 0,
+                          antennaGain: model.antennaGain,
+                          antennaPatternFile: model.patternFile
+                        });
+                      }
+                    }}
+                  >
+                    {AP_LIBRARY.map(model => (
+                      <option key={model.id} value={model.name}>{model.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-500">Band</label>
+                    <select
+                      className="w-full border border-slate-200 rounded-md px-2 py-1"
+                      value={selectedAp.band}
+                      onChange={(e) => updateSelectedAp({ band: e.target.value as AccessPoint['band'] })}
+                    >
+                      {['2.4GHz', '5GHz', '6GHz'].map(b => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-slate-500">Channel</label>
+                    <select
+                      className="w-full border border-slate-200 rounded-md px-2 py-1"
+                      value={selectedAp.channel}
+                      onChange={(e) => {
+                        const val = e.target.value === 'Auto' ? 'Auto' : Number(e.target.value);
+                        updateSelectedAp({ channel: val as AccessPoint['channel'] });
+                      }}
+                    >
+                      {CHANNEL_OPTIONS.map(ch => (
+                        <option key={ch} value={ch}>{ch}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-500 flex justify-between">
+                    <span>Tx Power</span>
+                    <span>{selectedAp.power} dBm</span>
+                  </label>
+                  <input
+                    type="range"
+                    min="5"
+                    max="30"
+                    value={selectedAp.power}
+                    onChange={(e) => updateSelectedAp({ power: Number(e.target.value) })}
+                    className="w-full accent-blue-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-500 flex justify-between">
+                    <span>Azimuth</span>
+                    <span>{selectedAp.azimuth}°</span>
+                  </label>
+                  <input
+                    type="range"
+                    min="-180"
+                    max="180"
+                    value={selectedAp.azimuth}
+                    onChange={(e) => updateSelectedAp({ azimuth: Number(e.target.value) })}
+                    className="w-full accent-blue-500"
+                  />
+                </div>
+
+                <div className="pt-3 border-t border-slate-100">
+                  <button
+                    onClick={() => deleteSelected()}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-md text-xs font-medium transition-colors"
+                  >
+                    <Trash2 size={14} /> Delete Access Point
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {selectedWall && (
+            <div className="absolute top-4 right-4 w-64 bg-white rounded-lg shadow-lg border border-slate-200 p-4 z-40 animate-in slide-in-from-right-5 fade-in duration-200">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-xs font-bold text-slate-500 uppercase">Wall Properties</h3>
+                <button onClick={() => setSelectedWallId(null)} className="text-slate-400 hover:text-slate-600"><X size={14} /></button>
+              </div>
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-500">Material</label>
+                  <select
+                    className="w-full border border-slate-200 rounded-md px-2 py-1"
+                    value={selectedWall.material}
+                    onChange={(e) => {
+                      const mat = e.target.value as Wall['material'];
+                      const tool = ENV_TOOLS.find(t => t.material === mat);
+                      setWalls(prev => prev.map(w => w.id === selectedWall.id ? {
+                        ...w,
+                        material: mat,
+                        attenuation: tool?.attenuation ?? w.attenuation,
+                        thickness: tool?.thickness ?? w.thickness
+                      } : w));
+                    }}
+                  >
+                    {ENV_TOOLS.map(t => (
+                      <option key={t.id} value={t.material}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="pt-3 border-t border-slate-100">
+                  <button
+                    onClick={() => deleteSelected()}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-md text-xs font-medium transition-colors"
+                  >
+                    <Trash2 size={14} /> Delete Wall
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* AI Insight Popup */}
+          {aiSuggestion && (
+            <div className="absolute bottom-8 left-8 right-8 z-20 bg-white rounded-xl shadow-xl border border-blue-100 p-4 animate-in slide-in-from-bottom-5 fade-in duration-300 max-w-2xl mx-auto">
               <div className="flex justify-between items-start mb-2">
-                 <h4 className="text-blue-700 font-semibold flex items-center gap-2"><Info size={18}/> AI Optimization Insights</h4>
-                 <button onClick={() => setAiSuggestion(null)} className="text-slate-400 hover:text-slate-600">×</button>
+                <h4 className="text-blue-700 font-semibold flex items-center gap-2"><Info size={18} /> AI Optimization Insights</h4>
+                <button onClick={() => setAiSuggestion(null)} className="text-slate-400 hover:text-slate-600">×</button>
               </div>
               <div className="text-sm text-slate-700 whitespace-pre-line leading-relaxed">
                 {aiSuggestion}
               </div>
-           </div>
-        )}
-
-        {/* Canvas Container */}
-        <div
-          ref={editorRef}
-          className="bg-white shadow-lg rounded-sm w-[800px] h-[600px] mx-auto relative select-none cursor-crosshair border border-slate-300"
-          onMouseMove={handleMouseMove}
-          onMouseDown={handleCanvasMouseDown}
-        >
-          {/* Grid Background */}
-          <div className="absolute inset-0 z-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#64748b 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
-
-          {/* Floor Plan Image */}
-          {floorPlan.imageDataUrl && showFloorPlan && (
-            <img
-              src={floorPlan.imageDataUrl}
-              alt={floorPlan.imageName || 'Floor plan'}
-              className="absolute inset-0 w-full h-full object-contain pointer-events-none z-5"
-              style={{ opacity: floorPlan.opacity ?? 0.6 }}
-              draggable={false}
-            />
-          )}
-
-          {/* Heatmap Layer */}
-          <HeatmapCanvas
-             aps={aps}
-             walls={walls}
-             width={CANVAS_WIDTH}
-             height={CANVAS_HEIGHT}
-             show={showHeatmap}
-             metersPerPixel={metersPerPixel || DEFAULT_METERS_PER_PIXEL}
-          />
-
-          {/* Scale Overlay */}
-          {activeScaleOverlay && (
-            <svg className="absolute inset-0 z-30 pointer-events-none" width={CANVAS_WIDTH} height={CANVAS_HEIGHT}>
-              <line
-                x1={activeScaleOverlay.x1}
-                y1={activeScaleOverlay.y1}
-                x2={activeScaleOverlay.x2}
-                y2={activeScaleOverlay.y2}
-                stroke="#0ea5e9"
-                strokeWidth={3}
-                strokeDasharray={draftScaleLine ? '4 4' : '0'}
-              />
-              <circle cx={activeScaleOverlay.x1} cy={activeScaleOverlay.y1} r={4} fill="#0ea5e9" />
-              <circle cx={activeScaleOverlay.x2} cy={activeScaleOverlay.y2} r={4} fill="#0ea5e9" />
-              <text x={(activeScaleOverlay.x1 + activeScaleOverlay.x2) / 2} y={(activeScaleOverlay.y1 + activeScaleOverlay.y2) / 2 - 8} fill="#0f172a" fontSize="12" textAnchor="middle" fontWeight={600}>
-                {(scaleMetersLabel ? `${scaleMetersLabel.toFixed(2)} m` : `${activeScalePixelLength.toFixed(1)} px`)}
-              </text>
-            </svg>
-          )}
-
-          {/* Walls */}
-          {[...walls, draftWall && { ...wallAttributes, id: 'draft', ...draftWall }].filter(Boolean).map((wall, idx) => {
-            const typedWall = wall as Wall;
-            const style = materialStyles[typedWall.material];
-            const dx = typedWall.x2 - typedWall.x1;
-            const dy = typedWall.y2 - typedWall.y1;
-            const isVertical = Math.abs(dx) < Math.abs(dy);
-            const width = isVertical ? typedWall.thickness : Math.max(Math.abs(dx), 1);
-            const height = isVertical ? Math.max(Math.abs(dy), 1) : typedWall.thickness;
-            const left = Math.min(typedWall.x1, typedWall.x2) - (isVertical ? typedWall.thickness / 2 : 0);
-            const top = Math.min(typedWall.y1, typedWall.y2) - (!isVertical ? typedWall.thickness / 2 : 0);
-
-            return (
-              <div
-                key={`${typedWall.id}-${idx}`}
-                className={`absolute z-10 rounded-sm ${typedWall.id === 'draft' ? 'opacity-60 border border-dashed border-blue-400' : ''}`}
-                style={{
-                  left,
-                  top,
-                  width,
-                  height,
-                  backgroundColor: style?.color ?? '#cbd5e1',
-                  backgroundImage: style?.pattern,
-                  boxShadow: style?.shadow,
-                  opacity: typedWall.id === 'draft' ? 0.7 : 0.9,
-                }}
-              >
-                {typedWall.id !== 'draft' && (
-                  <div className="absolute -top-5 left-1/2 -translate-x-1/2 bg-white text-[10px] px-2 py-1 rounded shadow-sm border border-slate-200 flex gap-2">
-                    <span className="font-semibold text-slate-700">{typedWall.material}</span>
-                    <span className="text-slate-500">{typedWall.thickness}px • {typedWall.height}m</span>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-
-          {/* Access Points */}
-          {aps.map(ap => (
-            <div
-              key={ap.id}
-              onMouseDown={(e) => handleMouseDown(e, ap.id, 'ap')}
-              className={`absolute z-20 flex flex-col items-center justify-center transform -translate-x-1/2 -translate-y-1/2 cursor-move group transition-transform ${selectedApId === ap.id ? 'scale-110' : ''}`}
-              style={{ left: ap.x, top: ap.y }}
-            >
-               {/* Signal Rings Animation */}
-               {selectedApId === ap.id && (
-                  <>
-                     <div className="absolute w-24 h-24 border border-blue-400 rounded-full opacity-30 animate-ping"></div>
-                     <div className="absolute w-16 h-16 bg-blue-100 rounded-full opacity-40"></div>
-                  </>
-               )}
-
-               <div className={`w-10 h-10 rounded-full bg-white shadow-md border-2 flex items-center justify-center relative ${selectedApId === ap.id ? 'border-blue-500' : 'border-slate-300'}`}>
-                  <Wifi size={20} className={selectedApId === ap.id ? 'text-blue-600' : 'text-slate-500'} />
-                  {/* Badge */}
-                  <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white rounded-full"></div>
-               </div>
-               <span className="mt-1 text-[10px] font-bold text-slate-700 bg-white/80 px-1 rounded shadow-sm">{ap.id}</span>
-
-               {/* Popover actions on hover/select */}
-               {selectedApId === ap.id && (
-                 <div className="absolute top-full mt-2 flex flex-col gap-1 bg-white p-1 rounded-lg shadow-lg border border-slate-100 min-w-[120px]">
-                    <div className="px-2 py-1 border-b border-slate-100">
-                        <span className="text-[10px] text-slate-500 block">Model</span>
-                        <span className="text-xs font-medium text-slate-800">{ap.model}</span>
-                    </div>
-                    <button 
-                        onClick={(e) => { e.stopPropagation(); deleteSelected(); }}
-                        className="flex items-center gap-2 px-2 py-1 text-red-600 hover:bg-red-50 rounded text-xs"
-                    >
-                        <Trash2 size={12}/> Delete
-                    </button>
-                 </div>
-               )}
             </div>
-          ))}
+          )}
 
+          {/* Bottom Action Bar */}
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 z-10">
+            <button
+              onClick={runOptimization}
+              disabled={isOptimizing}
+              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg text-sm font-medium flex items-center gap-2 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {isOptimizing ? <Loader2 className="animate-spin" size={16} /> : <><Wifi size={16} /> Optimize Coverage</>}
+            </button>
+          </div>
         </div>
-
-        {/* Selected Property Inspector (Floating) */}
-        {selectedAp && (
-           <div className="absolute bottom-8 right-8 w-64 bg-white rounded-lg shadow-xl border border-slate-200 overflow-hidden">
-              <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                 <h4 className="font-semibold text-sm text-slate-800">Properties</h4>
-                 <button onClick={() => setSelectedApId(null)} className="text-slate-400 hover:text-slate-600">×</button>
-              </div>
-              <div className="p-4 space-y-4 text-sm">
-                 <div className="flex items-center justify-between">
-                   <span className="text-slate-500">ID</span>
-                   <span className="text-slate-800 font-mono">{selectedAp.id}</span>
-                 </div>
-
-                 <div className="space-y-1">
-                    <label className="text-xs text-slate-500">Model</label>
-                    <select
-                      className="w-full border border-slate-200 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      value={selectedAp.model}
-                      onChange={(e) => {
-                        const model = AP_LIBRARY.find(m => m.name === e.target.value);
-                        if (model) {
-                          updateSelectedAp({
-                            model: model.name,
-                            band: model.bands[0],
-                            power: model.defaultPower,
-                            height: model.defaultHeight,
-                            azimuth: model.defaultAzimuth ?? 0,
-                            tilt: model.defaultTilt ?? 0,
-                            antennaGain: model.antennaGain,
-                            antennaPatternFile: model.patternFile
-                          });
-                        }
-                      }}
-                    >
-                      {AP_LIBRARY.map(model => (
-                        <option key={model.id} value={model.name}>{model.name} · {model.vendor}</option>
-                      ))}
-                    </select>
-                    {selectedAp.antennaPatternFile && (
-                      <p className="text-[11px] text-slate-500">Pattern: {selectedAp.antennaPatternFile}</p>
-                    )}
-                 </div>
-
-                 <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-xs text-slate-500">Band</label>
-                      <select
-                        className="w-full border border-slate-200 rounded-md px-2 py-1"
-                        value={selectedAp.band}
-                        onChange={(e) => updateSelectedAp({ band: e.target.value as AccessPoint['band'] })}
-                      >
-                        {['2.4GHz', '5GHz', '6GHz'].map(b => (
-                          <option key={b} value={b}>{b}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-slate-500">Channel</label>
-                      <select
-                        className="w-full border border-slate-200 rounded-md px-2 py-1"
-                        value={selectedAp.channel}
-                        onChange={(e) => {
-                          const val = e.target.value === 'Auto' ? 'Auto' : Number(e.target.value);
-                          updateSelectedAp({ channel: val as AccessPoint['channel'] });
-                        }}
-                      >
-                        {CHANNEL_OPTIONS.map(ch => (
-                          <option key={ch} value={ch}>{ch}</option>
-                        ))}
-                      </select>
-                    </div>
-                 </div>
-
-                 <div className="grid grid-cols-2 gap-3">
-                   <div className="space-y-1">
-                     <label className="text-xs text-slate-500">Power (dBm)</label>
-                     <input
-                       type="range"
-                       min="5"
-                       max="30"
-                       value={selectedAp.power}
-                       onChange={(e) => updateSelectedAp({ power: Number(e.target.value) })}
-                       className="w-full"
-                     />
-                     <div className="text-right text-[11px] text-slate-500">{selectedAp.power} dBm</div>
-                   </div>
-                   <div className="space-y-1">
-                     <label className="text-xs text-slate-500">Height (m)</label>
-                     <input
-                       type="number"
-                       value={selectedAp.height}
-                       min={1}
-                       max={8}
-                       step={0.1}
-                       onChange={(e) => updateSelectedAp({ height: Number(e.target.value) })}
-                       className="w-full border border-slate-200 rounded-md px-2 py-1"
-                     />
-                   </div>
-                 </div>
-
-                 <div className="grid grid-cols-2 gap-3">
-                   <div className="space-y-1">
-                     <label className="text-xs text-slate-500">Azimuth (°)</label>
-                     <input
-                       type="range"
-                       min="-180"
-                       max="180"
-                       value={selectedAp.azimuth}
-                       onChange={(e) => updateSelectedAp({ azimuth: Number(e.target.value) })}
-                       className="w-full"
-                     />
-                     <div className="text-right text-[11px] text-slate-500">{selectedAp.azimuth}°</div>
-                   </div>
-                   <div className="space-y-1">
-                     <label className="text-xs text-slate-500">Tilt (°)</label>
-                     <input
-                       type="range"
-                       min="-30"
-                       max="30"
-                       value={selectedAp.tilt}
-                       onChange={(e) => updateSelectedAp({ tilt: Number(e.target.value) })}
-                       className="w-full"
-                     />
-                     <div className="text-right text-[11px] text-slate-500">{selectedAp.tilt}°</div>
-                   </div>
-                 </div>
-
-                 <div className="space-y-1">
-                   <label className="text-xs text-slate-500">Antenna gain / pattern</label>
-                   <div className="grid grid-cols-2 gap-2">
-                     <input
-                       type="number"
-                       value={selectedAp.antennaGain}
-                       min={0}
-                       max={20}
-                       step={0.5}
-                       onChange={(e) => updateSelectedAp({ antennaGain: Number(e.target.value) })}
-                       className="w-full border border-slate-200 rounded-md px-2 py-1"
-                     />
-                     <select
-                       className="w-full border border-slate-200 rounded-md px-2 py-1"
-                       value={selectedAp.antennaPatternFile ?? ''}
-                       onChange={(e) => {
-                         const pattern = ANTENNA_PATTERNS.find(p => p.file === e.target.value);
-                         updateSelectedAp({
-                           antennaPatternFile: e.target.value || undefined,
-                           antennaGain: pattern ? pattern.gain : selectedAp.antennaGain
-                         });
-                       }}
-                     >
-                       <option value="">Custom</option>
-                       {ANTENNA_PATTERNS.map(pattern => (
-                         <option key={pattern.file} value={pattern.file}>{pattern.label}</option>
-                       ))}
-                     </select>
-                   </div>
-                   <input
-                     type="file"
-                     accept=".ant,.msi,.json,.csv"
-                     onChange={(e) => {
-                       const file = e.target.files?.[0];
-                       if (file) {
-                         updateSelectedAp({ antennaPatternFile: file.name });
-                       }
-                     }}
-                     className="w-full text-[11px] text-slate-500"
-                   />
-                 </div>
-
-                 <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-500 space-y-1">
-                   <div className="flex items-center justify-between">
-                     <span>Band</span>
-                     <span className="font-medium text-slate-700">{selectedAp.band}</span>
-                   </div>
-                   <div className="flex items-center justify-between">
-                     <span>Channel</span>
-                     <span className="font-medium text-slate-700">{selectedAp.channel}</span>
-                   </div>
-                 </div>
-              </div>
-           </div>
-        )}
       </div>
     </div>
   );

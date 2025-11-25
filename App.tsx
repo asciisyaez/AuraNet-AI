@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Layout, Folder, Users, Settings, Bell, Search, Menu, LogOut, LayoutGrid } from 'lucide-react';
 import ProjectList from './components/ProjectList';
 import FloorPlanEditor from './components/FloorPlanEditor';
-import RoamingSimulator from './components/RoamingSimulator';
 import { useProjectStore } from './services/projectStore';
 
 // Basic SVG Logo
@@ -113,12 +112,7 @@ const App: React.FC = () => {
         {/* Dynamic View Content */}
         <div className="flex-1 overflow-hidden relative">
            {currentView === 'projects' && <ProjectList />}
-           {currentView === 'editor' && (
-             <>
-                <FloorPlanEditor />
-                <RoamingSimulator />
-             </>
-           )}
+           {currentView === 'editor' && <FloorPlanEditor />}
            {currentView === 'dashboard' && (
              <div className="p-10 text-center text-slate-500 mt-20">
                <div className="text-6xl mb-4">📊</div>
