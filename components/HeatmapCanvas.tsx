@@ -1,8 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, ThreeElements } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { CanvasTexture, DoubleSide } from 'three';
 import { AccessPoint, Wall } from '../types';
+
+// Extend JSX IntrinsicElements with Three.js types
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace JSX {
+    interface IntrinsicElements extends ThreeElements {}
+  }
+}
 
 interface HeatmapCanvasProps {
   aps: AccessPoint[];
@@ -204,7 +212,7 @@ const computeWallCrossings = (walls: WallSegment[], ax: number, ay: number, px: 
   return { count, attenuation };
 };
 
-const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height, show }) => {
+const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height, show, metersPerPixel }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const workerRef = useRef<Worker | null>(null);

@@ -17,7 +17,7 @@ export const getOptimizationSuggestions = async (aps: AccessPoint[], walls: Wall
   const prompt = `
     Current Configuration:
     Access Points: ${JSON.stringify(aps.map(ap => ({ id: ap.id, x: ap.x, y: ap.y, model: ap.model, power: ap.power, channel: ap.channel, band: ap.band, height: ap.height, azimuth: ap.azimuth, tilt: ap.tilt, antennaGain: ap.antennaGain })))}
-    Walls: ${JSON.stringify(walls.map(w => ({ type: w.type, length: Math.sqrt(Math.pow(w.x2-w.x1, 2) + Math.pow(w.y2-w.y1, 2)) })))}
+    Walls: ${JSON.stringify(walls.map(w => ({ material: w.material, length: Math.sqrt(Math.pow(w.x2-w.x1, 2) + Math.pow(w.y2-w.y1, 2)) })))}
     
     Please suggest optimizations.
   `;

@@ -12,6 +12,7 @@ type ProjectActions = {
   addProject: (name?: string) => void;
   setProjects: (projects: Project[]) => void;
   setSelectedProjectId: (projectId?: string) => void;
+  updateProject: (projectId: string, updates: Partial<Project>) => void;
   updateGlobalSettings: (updates: Partial<GlobalSettings>) => void;
   saveToStorage: () => PersistedProjectData;
   loadFromStorage: () => PersistedProjectData;
@@ -76,6 +77,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   setSelectedProjectId: (projectId?: string) =>
     set((state) => ({
       selectedProjectId: projectId ?? state.projects[0]?.id,
+    })),
+
+  updateProject: (projectId: string, updates: Partial<Project>) =>
+    set((state) => ({
+      projects: state.projects.map((project) =>
+        project.id === projectId ? { ...project, ...updates, lastModified: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) } : project
+      ),
     })),
 
   updateGlobalSettings: (updates: Partial<GlobalSettings>) => {

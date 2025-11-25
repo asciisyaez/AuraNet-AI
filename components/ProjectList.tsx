@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { FileText, Edit, Trash, Plus, Save, Upload } from 'lucide-react';
 import { useProjectStore } from '../services/projectStore';
 import { PersistedProjectData, Project } from '../types';
@@ -9,21 +9,15 @@ const ProjectList: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'All' | Project['status']>('All');
   const [message, setMessage] = useState('');
 
-  const { projects, globalSettings, selectedProjectId } = useProjectStore((state) => ({
-    projects: state.projects,
-    globalSettings: state.globalSettings,
-    selectedProjectId: state.selectedProjectId,
-  }));
+  const projects = useProjectStore((state) => state.projects);
+  const globalSettings = useProjectStore((state) => state.globalSettings);
+  const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
   const addProject = useProjectStore((state) => state.addProject);
   const saveToStorage = useProjectStore((state) => state.saveToStorage);
   const loadFromStorage = useProjectStore((state) => state.loadFromStorage);
   const importData = useProjectStore((state) => state.importData);
   const updateGlobalSettings = useProjectStore((state) => state.updateGlobalSettings);
   const setSelectedProjectId = useProjectStore((state) => state.setSelectedProjectId);
-
-  useEffect(() => {
-    loadFromStorage();
-  }, [loadFromStorage]);
 
   const filteredProjects = useMemo(() => {
     return projects.filter((project) => {

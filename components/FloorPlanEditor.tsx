@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AccessPoint, Wall } from '../types';
+import { AccessPoint, Wall, FloorPlan, ScaleReference } from '../types';
 import { INITIAL_APS, INITIAL_WALLS, HARDWARE_TOOLS, ENV_TOOLS } from '../constants';
 import HeatmapCanvas from './HeatmapCanvas';
 import { Wifi, Router, Square, Trash2, Edit3, Loader2, Info, Image as ImageIcon, Eye, EyeOff, Ruler } from 'lucide-react';
@@ -13,6 +13,8 @@ const COVERAGE_TARGET_DBM = -65;
 const DEFAULT_METERS_PER_PIXEL = 0.6;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
+
+const generateApId = () => `AP-${Date.now().toString().slice(-4)}`;
 
 const segmentsIntersect = (ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number) => {
   const det = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx);
@@ -39,6 +41,7 @@ const evaluateCoverage = (
   target: number = COVERAGE_TARGET_DBM,
   metersPerPixel: number = DEFAULT_METERS_PER_PIXEL
 ) => {
+  const desiredCoverage = 95;
   const gridSpacing = 60;
   const gridPoints: { x: number; y: number }[] = [];
   for (let x = gridSpacing; x < CANVAS_WIDTH; x += gridSpacing) {
@@ -76,12 +79,6 @@ const evaluateCoverage = (
 
   return { coveragePercent, averageSignal, score, apCount: aps.length };
 };
-
-const runSimulatedAnnealing = (aps: AccessPoint[], walls: Wall[], target: number, metersPerPixel: number) => {
-  let current = aps.map(ap => ({ ...ap }));
-  let best = current.map(ap => ({ ...ap }));
-  let { score: bestScore } = evaluateCoverage(best, walls, target, metersPerPixel);
-  let { score: currentScore } = evaluateCoverage(current, walls, target, metersPerPixel);
 
 const createRandomAp = () => {
   const template = AP_LIBRARY[0];
@@ -126,37 +123,41 @@ const mutateLayout = (aps: AccessPoint[]) => {
   return candidate;
 };
 
-const runGeneticOptimization = (
+const runSimulatedAnnealing = (
   aps: AccessPoint[],
   walls: Wall[],
   target: number,
-  populationSize: number,
-  iterations: number,
+  metersPerPixel: number,
+  iterations: number = 50
 ) => {
-  const desiredCoverage = 95;
-  const baseIndividual = aps.map(ap => ({ ...ap }));
-  let population: AccessPoint[][] = [baseIndividual];
+  let current = aps.map(ap => ({ ...ap }));
+  let best = current.map(ap => ({ ...ap }));
+  let { score: bestScore } = evaluateCoverage(best, walls, target, metersPerPixel);
+  let { score: currentScore } = evaluateCoverage(current, walls, target, metersPerPixel);
 
-  for (let i = 1; i < populationSize; i++) {
-    population.push(mutateLayout(baseIndividual));
-  }
+  let temperature = 100;
+  const coolingRate = 0.95;
 
+  for (let i = 0; i < iterations; i++) {
+    const candidate = mutateLayout(current);
     const { score: candidateScore } = evaluateCoverage(candidate, walls, target, metersPerPixel);
+
+    // Acceptance probability (Metropolis criterion)
     const acceptance = Math.exp((currentScore - candidateScore) / Math.max(temperature, 0.01));
+
     if (candidateScore < currentScore || Math.random() < acceptance) {
       current = candidate;
       currentScore = candidateScore;
+
+      // Track best solution found
+      if (currentScore < bestScore) {
+        best = current.map(ap => ({ ...ap }));
+        bestScore = currentScore;
+      }
     }
 
-    const elites = evaluated.slice(0, Math.max(2, Math.floor(populationSize * 0.3))).map(e => e.layout);
-    const nextPopulation: AccessPoint[][] = [];
-
-    while (nextPopulation.length < populationSize) {
-      const parent = elites[Math.floor(Math.random() * elites.length)];
-      nextPopulation.push(mutateLayout(parent));
-    }
-
-    population = nextPopulation;
+    // Cool down
+    temperature *= coolingRate;
   }
 
   const bestMetrics = evaluateCoverage(best, walls, target, metersPerPixel);
@@ -166,6 +167,7 @@ const runGeneticOptimization = (
 const FloorPlanEditor: React.FC = () => {
   const projects = useProjectStore((state) => state.projects);
   const selectedProjectId = useProjectStore((state) => state.selectedProjectId ?? state.projects[0]?.id);
+  const setSelectedProjectId = useProjectStore((state) => state.setSelectedProjectId);
   const updateProject = useProjectStore((state) => state.updateProject);
   const currentProject = projects.find(project => project.id === selectedProjectId);
 
@@ -179,7 +181,7 @@ const FloorPlanEditor: React.FC = () => {
     y1: 0,
     x2: 0,
     y2: 0,
-    material: ENV_TOOLS[0]?.material ?? 'Drywall',
+    material: (ENV_TOOLS[0]?.material ?? 'Drywall') as Wall['material'],
     attenuation: ENV_TOOLS[0]?.attenuation ?? 3,
     thickness: ENV_TOOLS[0]?.thickness ?? 8,
     height: ENV_TOOLS[0]?.height ?? 3,
@@ -207,16 +209,14 @@ const FloorPlanEditor: React.FC = () => {
   const [isDrawingScale, setIsDrawingScale] = useState(false);
   const [draftScaleLine, setDraftScaleLine] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [showFloorPlan, setShowFloorPlan] = useState(true);
+  const [populationSize, setPopulationSize] = useState(12);
+  const [optimizationIterations, setOptimizationIterations] = useState(30);
 
   // Dragging state
   const [isDragging, setIsDragging] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
   const editorRef = useRef<HTMLDivElement>(null);
   const [draftWall, setDraftWall] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
-
-  const projects = useProjectStore((state) => state.projects);
-  const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
-  const setSelectedProjectId = useProjectStore((state) => state.setSelectedProjectId);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? projects[0],
@@ -228,6 +228,17 @@ const FloorPlanEditor: React.FC = () => {
       setSelectedProjectId(projects[0].id);
     }
   }, [projects, selectedProjectId, setSelectedProjectId]);
+
+  const persistFloorPlan = (updates: Partial<FloorPlan>) => {
+    const newFloorPlan = { ...floorPlan, ...updates };
+    setFloorPlan(newFloorPlan);
+    if (updates.metersPerPixel !== undefined) {
+      setMetersPerPixel(updates.metersPerPixel);
+    }
+    if (currentProject) {
+      updateProject(currentProject.id, { floorPlan: newFloorPlan });
+    }
+  };
 
   const updateSelectedAp = (updates: Partial<AccessPoint>) => {
     if (!selectedApId) return;
@@ -431,6 +442,11 @@ const FloorPlanEditor: React.FC = () => {
 
   const selectedAp = aps.find(a => a.id === selectedApId);
   const activeScaleOverlay = draftScaleLine ?? scaleLine;
+  const activeScalePixelLength: number = activeScaleOverlay 
+    ? ('pixelLength' in activeScaleOverlay 
+      ? (activeScaleOverlay.pixelLength as number)
+      : Math.hypot(activeScaleOverlay.x2 - activeScaleOverlay.x1, activeScaleOverlay.y2 - activeScaleOverlay.y1))
+    : 0;
   const scaleMetersLabel = scaleLine?.distanceMeters || (scaleInputMeters > 0 ? scaleInputMeters : undefined);
 
   const materialStyles: Record<Wall['material'], { color: string; pattern?: string; shadow?: string }> = {
@@ -569,7 +585,7 @@ const FloorPlanEditor: React.FC = () => {
                   setActiveEnvToolId(tool.id);
                   setWallAttributes(prev => ({
                     ...prev,
-                    material: tool.material,
+                    material: tool.material as Wall['material'],
                     attenuation: tool.attenuation,
                     thickness: tool.thickness,
                     height: tool.height,
@@ -812,7 +828,7 @@ const FloorPlanEditor: React.FC = () => {
               <circle cx={activeScaleOverlay.x1} cy={activeScaleOverlay.y1} r={4} fill="#0ea5e9" />
               <circle cx={activeScaleOverlay.x2} cy={activeScaleOverlay.y2} r={4} fill="#0ea5e9" />
               <text x={(activeScaleOverlay.x1 + activeScaleOverlay.x2) / 2} y={(activeScaleOverlay.y1 + activeScaleOverlay.y2) / 2 - 8} fill="#0f172a" fontSize="12" textAnchor="middle" fontWeight={600}>
-                {(scaleMetersLabel ? `${scaleMetersLabel.toFixed(2)} m` : `${(activeScaleOverlay.pixelLength ?? 0).toFixed(1)} px`)}
+                {(scaleMetersLabel ? `${scaleMetersLabel.toFixed(2)} m` : `${activeScalePixelLength.toFixed(1)} px`)}
               </text>
             </svg>
           )}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Layout, Folder, Users, Settings, Bell, Search, Menu, LogOut, LayoutGrid } from 'lucide-react';
 import ProjectList from './components/ProjectList';
 import FloorPlanEditor from './components/FloorPlanEditor';
@@ -24,8 +24,11 @@ const App: React.FC = () => {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const projectCount = useProjectStore((state) => state.projects.length);
   const loadProjects = useProjectStore((state) => state.loadFromStorage);
+  const hasHydrated = useRef(false);
 
   useEffect(() => {
+    if (hasHydrated.current) return;
+    hasHydrated.current = true;
     loadProjects();
   }, [loadProjects]);
 
