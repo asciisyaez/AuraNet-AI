@@ -36,22 +36,32 @@ def decode_image(data_url: str) -> np.ndarray:
     return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
 def detect_walls_opencv(image: np.ndarray, meters_per_pixel: float) -> List[Wall]:
-    # Convert to grayscale
+    # Convert to grayscale and enhance contrast to make faint blueprint lines pop
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+
+    # Light blur to suppress speckle noise without destroying line edges
+    blurred = cv2.GaussianBlur(enhanced, (3, 3), 0)
+
     # Adaptive thresholding to handle varying lighting/contrast
-    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+    thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                    cv2.THRESH_BINARY_INV, 11, 2)
-    
+
     # Morphological operations to remove noise (text, furniture) and connect wall segments
-    kernel = np.ones((3,3), np.uint8)
-    opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
-    
-    # Dilate to connect broken lines
-    dilated = cv2.dilate(opening, kernel, iterations=1)
-    
+    kernel_size = max(3, int(0.05 / meters_per_pixel))
+    if kernel_size % 2 == 0:
+        kernel_size += 1  # ensure odd size for symmetric operations
+    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+
+    cleaned = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+    connected = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    # Dilate slightly to bridge gaps between short segments
+    dilated = cv2.dilate(connected, kernel, iterations=1)
+
     # Edge detection (Canny)
-    edges = cv2.Canny(dilated, 50, 150, apertureSize=3)
+    edges = cv2.Canny(dilated, 40, 120, apertureSize=3)
     
     # Hough Line Transform parameters
     min_wall_length_m = 0.5  # 50cm minimum wall length
@@ -59,7 +69,7 @@ def detect_walls_opencv(image: np.ndarray, meters_per_pixel: float) -> List[Wall
     max_gap_px = max(5, int(0.3 / meters_per_pixel))  # 30cm gap allowed
     
     # Use higher threshold to reduce noise and duplicates
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, 
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=60,
                             minLineLength=min_line_length_px, maxLineGap=max_gap_px)
     
     if lines is None:
@@ -71,7 +81,7 @@ def detect_walls_opencv(image: np.ndarray, meters_per_pixel: float) -> List[Wall
         x1, y1, x2, y2 = line[0]
         all_lines.append((float(x1), float(y1), float(x2), float(y2)))
     
-    # Merge similar/overlapping lines
+    # Merge similar/overlapping lines and extend slightly so detected walls fully cover drawn lines
     def lines_are_similar(line1, line2, dist_threshold, angle_threshold_deg=10):
         """Check if two lines are similar enough to merge."""
         x1, y1, x2, y2 = line1
@@ -127,7 +137,7 @@ def detect_walls_opencv(image: np.ndarray, meters_per_pixel: float) -> List[Wall
         max_len = max(len1, len2)
         
         return min_dist < dist_threshold and midpoint_dist < max_len + dist_threshold
-    
+
     def merge_two_lines(line1, line2):
         """Merge two similar lines into one."""
         x1, y1, x2, y2 = line1
@@ -164,9 +174,25 @@ def detect_walls_opencv(image: np.ndarray, meters_per_pixel: float) -> List[Wall
         projections.sort(key=lambda x: x[0])
         _, min_x, min_y = projections[0]
         _, max_x, max_y = projections[-1]
-        
+
         return (min_x, min_y, max_x, max_y)
-    
+
+    def extend_line(line, extension_px=8):
+        x1, y1, x2, y2 = line
+        length = np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+        if length == 0:
+            return line
+        dx = (x2 - x1) / length
+        dy = (y2 - y1) / length
+        return (
+            x1 - dx * extension_px,
+            y1 - dy * extension_px,
+            x2 + dx * extension_px,
+            y2 + dy * extension_px,
+        )
+
+    extension_px = max(6, int(0.15 / meters_per_pixel))
+
     # Merge overlapping lines iteratively
     dist_threshold = max(15, int(0.15 / meters_per_pixel))  # 15cm tolerance
     
@@ -201,7 +227,7 @@ def detect_walls_opencv(image: np.ndarray, meters_per_pixel: float) -> List[Wall
     for x1, y1, x2, y2 in all_lines:
         length = np.sqrt((x2-x1)**2 + (y2-y1)**2)
         if length >= min_final_length:
-            filtered_lines.append((x1, y1, x2, y2))
+            filtered_lines.append(extend_line((x1, y1, x2, y2), extension_px))
     
     detected_walls = []
     for i, (x1, y1, x2, y2) in enumerate(filtered_lines):
@@ -213,7 +239,7 @@ def detect_walls_opencv(image: np.ndarray, meters_per_pixel: float) -> List[Wall
             y2=float(y2),
             material="Concrete",
             attenuation=12.0,
-            thickness=10,
+            thickness=max(8, int(0.12 / meters_per_pixel)),
             height=3.0,
             elevation=0.0,
             metadata=WallMetadata(color="#475569")

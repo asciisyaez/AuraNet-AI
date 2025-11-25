@@ -222,6 +222,13 @@ const FloorPlanEditor: React.FC = () => {
 
   const [isDraggingAp, setIsDraggingAp] = useState(false);
   const dragOffset = useRef({ x: 0, y: 0 });
+  const [isDraggingWall, setIsDraggingWall] = useState(false);
+  const wallDragStart = useRef<{
+    wallId: string;
+    startX: number;
+    startY: number;
+    initial: { x1: number; y1: number; x2: number; y2: number };
+  } | null>(null);
   const [draftWall, setDraftWall] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
   const selectedProject = useMemo(
@@ -389,6 +396,26 @@ const FloorPlanEditor: React.FC = () => {
     }
   };
 
+  const handleWallMouseDown = (e: React.MouseEvent, wallId: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    const { x, y } = screenToCanvas(e.clientX, e.clientY);
+    const wall = walls.find(w => w.id === wallId);
+
+    if (!wall) return;
+
+    setSelectedWallId(wallId);
+    setSelectedApId(null);
+    wallDragStart.current = {
+      wallId,
+      startX: x,
+      startY: y,
+      initial: { x1: wall.x1, y1: wall.y1, x2: wall.x2, y2: wall.y2 }
+    };
+    setIsDraggingWall(true);
+  };
+
   const handleMouseMove = (e: React.MouseEvent) => {
     const { x, y } = screenToCanvas(e.clientX, e.clientY);
 
@@ -415,6 +442,21 @@ const FloorPlanEditor: React.FC = () => {
       return;
     }
 
+    if (isDraggingWall && wallDragStart.current) {
+      const { wallId, startX, startY, initial } = wallDragStart.current;
+      const dx = x - startX;
+      const dy = y - startY;
+
+      setWalls(prev => prev.map(w => w.id === wallId ? {
+        ...w,
+        x1: initial.x1 + dx,
+        y1: initial.y1 + dy,
+        x2: initial.x2 + dx,
+        y2: initial.y2 + dy
+      } : w));
+      return;
+    }
+
     if (isDrawingScale && draftScaleLine) {
       setDraftScaleLine(prev => prev ? { ...prev, x2: x, y2: y } : null);
       return;
@@ -438,7 +480,9 @@ const FloorPlanEditor: React.FC = () => {
   const handleMouseUp = () => {
     setIsPanning(false);
     setIsDraggingAp(false);
+    setIsDraggingWall(false);
     dragOffset.current = null;
+    wallDragStart.current = null;
 
     if (isDrawingScale && draftScaleLine) {
       const pixelLength = Math.hypot(draftScaleLine.x2 - draftScaleLine.x1, draftScaleLine.y2 - draftScaleLine.y1);
@@ -796,7 +840,7 @@ const FloorPlanEditor: React.FC = () => {
           onWheel={handleWheel}
           onMouseDown={(e) => handleMouseDown(e)}
           onMouseMove={handleMouseMove}
-          style={{ cursor: isPanning ? 'grabbing' : isDraggingAp ? 'move' : 'crosshair' }}
+          style={{ cursor: isPanning ? 'grabbing' : (isDraggingAp || isDraggingWall) ? 'move' : 'crosshair' }}
         >
           {/* Grid Background */}
           <div className="absolute inset-0 z-0 opacity-10 pointer-events-none"
@@ -870,15 +914,8 @@ const FloorPlanEditor: React.FC = () => {
                 return (
                   <div
                     key={`${typedWall.id}-${idx}`}
-                    onMouseDown={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      if (typedWall.id !== 'draft') {
-                        setSelectedWallId(typedWall.id);
-                        setSelectedApId(null);
-                      }
-                    }}
-                    className={`absolute rounded-sm cursor-pointer transition-all ${typedWall.id === 'draft' ? 'opacity-60 border border-dashed border-blue-400' : ''} ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
+                    onMouseDown={(e) => typedWall.id !== 'draft' && handleWallMouseDown(e, typedWall.id)}
+                    className={`absolute rounded-sm cursor-move transition-all ${typedWall.id === 'draft' ? 'opacity-60 border border-dashed border-blue-400' : ''} ${isSelected ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
                     style={{
                       left: centerX,
                       top: centerY,
