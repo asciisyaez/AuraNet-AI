@@ -75,10 +75,16 @@ const evaluateCoverage = (
   return { coveragePercent, averageSignal, score, apCount: aps.length };
 };
 
+let apIdCounter = 0;
+const generateApId = () => {
+  apIdCounter += 1;
+  return `AP-${Date.now()}-${apIdCounter}`;
+};
+
 const createRandomAp = () => {
   const template = AP_LIBRARY[0];
   return {
-    id: `AP-${Date.now().toString().slice(-4)}-${Math.floor(Math.random() * 1000)}`,
+    id: generateApId(),
     x: clamp(Math.random() * CANVAS_WIDTH, 40, CANVAS_WIDTH - 40),
     y: clamp(Math.random() * CANVAS_HEIGHT, 40, CANVAS_HEIGHT - 40),
     model: template.name,
