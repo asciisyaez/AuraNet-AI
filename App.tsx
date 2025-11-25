@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Layout, Folder, Users, Settings, Bell, Search, Menu, LogOut, LayoutGrid } from 'lucide-react';
+import { Layout, Folder, Users, Settings, Bell, Search, Menu, LogOut, LayoutGrid, LogIn, KeyRound } from 'lucide-react';
 import ProjectList from './components/ProjectList';
 import FloorPlanEditor from './components/FloorPlanEditor';
 import { useProjectStore } from './services/projectStore';
+import UserManagement from './components/UserManagement';
+import { useAuthStore } from './services/authStore';
+import { useUserStore } from './services/userStore';
 
 // Basic SVG Logo
 const Logo = () => (
@@ -23,13 +26,17 @@ const App: React.FC = () => {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const projectCount = useProjectStore((state) => state.projects.length);
   const loadProjects = useProjectStore((state) => state.loadFromStorage);
+  const loadUsers = useUserStore((state) => state.loadFromStorage);
+  const { session, hydrate, signOut, signInWithGoogle } = useAuthStore();
   const hasHydrated = useRef(false);
 
   useEffect(() => {
     if (hasHydrated.current) return;
     hasHydrated.current = true;
     loadProjects();
-  }, [loadProjects]);
+    loadUsers();
+    hydrate();
+  }, [hydrate, loadProjects, loadUsers]);
 
   const NavItem = ({ view, icon: Icon, label, badge }: { view: View, icon: any, label: string, badge?: number }) => (
     <button
@@ -54,23 +61,32 @@ const App: React.FC = () => {
 
         <div className="flex-1 py-6 px-3 overflow-y-auto">
           <div className="mb-8">
-            <h3 className={`px-4 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 ${!isSidebarOpen && 'hidden'}`}>Main</h3>
+            <h3 className={`px-4 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 ${!isSidebarOpen ? 'hidden' : ''}`}>
+              Main
+            </h3>
             <NavItem view="dashboard" icon={LayoutGrid} label="Dashboard" />
             <NavItem view="projects" icon={Folder} label="Projects" badge={projectCount} />
             <NavItem view="editor" icon={Layout} label="Floor Plans" />
           </div>
 
           <div className="mb-8">
-             <h3 className={`px-4 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 ${!isSidebarOpen && 'hidden'}`}>Organization</h3>
+             <h3 className={`px-4 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 ${!isSidebarOpen ? 'hidden' : ''}`}>
+               Organization
+             </h3>
              <NavItem view="users" icon={Users} label="Users" />
              <NavItem view="settings" icon={Settings} label="Settings" />
           </div>
         </div>
 
         <div className="p-4 border-t border-slate-100">
-           <button className="flex items-center gap-3 w-full px-2 py-2 text-slate-600 hover:text-red-600 text-sm font-medium transition-colors">
-              <LogOut size={18} />
-              {isSidebarOpen && <span>Sign Out</span>}
+           <button
+             onClick={() => (session ? signOut() : signInWithGoogle())}
+             className={`flex items-center gap-3 w-full px-2 py-2 text-sm font-medium transition-colors ${
+               session ? 'text-slate-600 hover:text-red-600' : 'text-blue-600 hover:text-blue-700'
+             }`}
+           >
+              {session ? <LogOut size={18} /> : <LogIn size={18} />}
+              {isSidebarOpen && <span>{session ? 'Sign Out' : 'Sign In with Google'}</span>}
            </button>
         </div>
       </aside>
@@ -99,15 +115,25 @@ const App: React.FC = () => {
                  <Bell size={20} />
                  <span className="absolute top-1 right-2 w-2 h-2 bg-red-500 rounded-full border border-white"></span>
               </button>
-              <div className="flex items-center gap-3 pl-6 border-l border-slate-200">
-                 <div className="text-right hidden md:block">
-                    <div className="text-sm font-medium text-slate-800">John Doe</div>
-                    <div className="text-xs text-slate-500">Admin</div>
+             <div className="flex items-center gap-3 pl-6 border-l border-slate-200">
+                <div className="text-right hidden md:block">
+                    <div className="text-sm font-medium text-slate-800">{session?.name ?? 'Guest'}</div>
+                    <div className="text-xs text-slate-500">{session?.role ?? 'No Google session'}</div>
+                </div>
+                 <div className="w-10 h-10 rounded-full border-2 border-white shadow-sm bg-blue-600 text-white flex items-center justify-center font-semibold">
+                   {session?.name ? session.name.split(' ').map((n) => n[0]).join('').toUpperCase() : 'AU'}
                  </div>
-                 <img src="https://picsum.photos/40/40" alt="Avatar" className="w-10 h-10 rounded-full border-2 border-white shadow-sm" />
               </div>
-           </div>
-        </header>
+              {!session && (
+                <button
+                  onClick={() => signInWithGoogle()}
+                  className="hidden md:inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
+                >
+                  <KeyRound size={16} /> Connect Google
+                </button>
+              )}
+             </div>
+          </header>
 
         {/* Dynamic View Content */}
         <div className="flex-1 overflow-hidden relative">
@@ -120,12 +146,8 @@ const App: React.FC = () => {
                <p>Navigate to Projects or Floor Plans to see implemented features.</p>
              </div>
            )}
-             {currentView === 'users' && (
-             <div className="p-10 text-center text-slate-500 mt-20">
-               <div className="text-6xl mb-4">👥</div>
-               <h2 className="text-xl font-semibold">User Management</h2>
-               <p>Navigate to Projects or Floor Plans to see implemented features.</p>
-             </div>
+            {currentView === 'users' && (
+             <UserManagement />
            )}
         </div>
       </main>

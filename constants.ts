@@ -1,4 +1,4 @@
-import { Project, UserProfile, AccessPoint, Wall, GlobalSettings } from './types';
+import { Project, UserProfile, AccessPoint, Wall, GlobalSettings, Region } from './types';
 
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   units: 'metric',
@@ -74,3 +74,63 @@ export const HARDWARE_TOOLS = [
 
 export const INITIAL_APS: AccessPoint[] = [];
 export const INITIAL_WALLS: Wall[] = [];
+
+export const DEFAULT_REGIONS: Region[] = [
+  { id: 'na', name: 'North America', status: 'Active' },
+  { id: 'emea', name: 'EMEA', status: 'Active' },
+  { id: 'apac', name: 'APAC', status: 'Maintenance' },
+  { id: 'latam', name: 'LATAM', status: 'Onboarding' },
+];
+
+export const DEFAULT_USERS: UserProfile[] = [
+  {
+    id: 'u1',
+    name: 'Patricia Wu',
+    email: 'patricia.wu@auranet.ai',
+    role: 'Regional Admin',
+    status: 'Active',
+    region: 'All Regions',
+    lastLogin: 'Today, 9:10 AM',
+    avatarColor: '#2563eb',
+  },
+  {
+    id: 'u2',
+    name: 'Leo Martinez',
+    email: 'leo.martinez@auranet.ai',
+    role: 'Local Admin',
+    status: 'Active',
+    region: 'North America',
+    lastLogin: 'Today, 7:55 AM',
+    avatarColor: '#16a34a',
+  },
+  {
+    id: 'u3',
+    name: 'Sofia Petrov',
+    email: 'sofia.petrov@auranet.ai',
+    role: 'Regional Viewer',
+    status: 'Active',
+    region: 'All Regions',
+    lastLogin: 'Yesterday, 5:20 PM',
+    avatarColor: '#f59e0b',
+  },
+  {
+    id: 'u4',
+    name: 'Grace Ananda',
+    email: 'grace.ananda@auranet.ai',
+    role: 'Local Viewer',
+    status: 'Active',
+    region: 'APAC',
+    lastLogin: 'Oct 30, 4:10 PM',
+    avatarColor: '#0ea5e9',
+  },
+  {
+    id: 'u5',
+    name: 'Ravi Patel',
+    email: 'ravi.patel@auranet.ai',
+    role: 'Local Admin',
+    status: 'Inactive',
+    region: 'LATAM',
+    lastLogin: 'Oct 24, 11:32 AM',
+    avatarColor: '#a855f7',
+  },
+];
