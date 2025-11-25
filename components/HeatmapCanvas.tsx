@@ -1,16 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Canvas, ThreeElements } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
-import { CanvasTexture, DoubleSide } from 'three';
 import { AccessPoint, Wall } from '../types';
-
-// Extend JSX IntrinsicElements with Three.js types
-declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
-  namespace JSX {
-    interface IntrinsicElements extends ThreeElements {}
-  }
-}
 
 interface HeatmapCanvasProps {
   aps: AccessPoint[];
@@ -19,6 +8,12 @@ interface HeatmapCanvasProps {
   height: number;
   show: boolean;
   metersPerPixel: number;
+  // Configuration Props
+  colorScale?: 'turbo' | 'viridis' | 'magma';
+  minDbm?: number;
+  maxDbm?: number;
+  coverageThreshold?: number;
+  onTextureReady?: (texture: any) => void; // Placeholder for future 3D integration
 }
 
 type ColorScale = 'turbo' | 'viridis' | 'magma';
@@ -212,17 +207,20 @@ const computeWallCrossings = (walls: WallSegment[], ax: number, ay: number, px: 
   return { count, attenuation };
 };
 
-const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height, show, metersPerPixel }) => {
+const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({
+  aps,
+  walls,
+  width,
+  height,
+  show,
+  metersPerPixel,
+  colorScale = 'turbo',
+  minDbm = -90,
+  maxDbm = -40,
+  coverageThreshold = -70
+}) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const workerRef = useRef<Worker | null>(null);
-  const [colorScale, setColorScale] = useState<ColorScale>('turbo');
-  const [minDbm, setMinDbm] = useState(-90);
-  const [maxDbm, setMaxDbm] = useState(-40);
-  const [coverageThreshold, setCoverageThreshold] = useState(-70);
-  const [show3d, setShow3d] = useState(true);
-  const [volumetric, setVolumetric] = useState(false);
-  const [heatmapVersion, setHeatmapVersion] = useState(0);
 
   const wallSegments: WallSegment[] = useMemo(() => walls.map(wall => {
     const minX = Math.min(wall.x1, wall.x2);
@@ -242,8 +240,6 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
     };
   }), [walls]);
 
-  const pixelScale = metersPerPixel || 0.6;
-
   useEffect(() => {
     if (!show) return;
     if (typeof Worker !== 'undefined' && !workerRef.current) {
@@ -256,17 +252,8 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;
 
-    const offCanvas = offscreenRef.current ?? document.createElement('canvas');
-    offCanvas.width = width;
-    offCanvas.height = height;
-    offscreenRef.current = offCanvas;
-    const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
-    if (!offCtx) return;
-
     const imageData = ctx.createImageData(width, height);
     const data = imageData.data;
-    const offImage = offCtx.createImageData(width, height);
-    const offData = offImage.data;
     const minVal = Math.min(minDbm, maxDbm - 1);
     const maxVal = Math.max(maxDbm, minDbm + 1);
 
@@ -281,16 +268,9 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
         data[idx + 1] = g;
         data[idx + 2] = b;
         data[idx + 3] = alpha;
-
-        offData[idx] = r;
-        offData[idx + 1] = g;
-        offData[idx + 2] = b;
-        offData[idx + 3] = alpha;
       }
 
       ctx.putImageData(imageData, 0, 0);
-      offCtx.putImageData(offImage, 0, 0);
-      setHeatmapVersion(v => v + 1);
     };
 
     const computeLocally = () => {
@@ -352,7 +332,7 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
         height,
         aps,
         walls: wallSegments,
-        config: DEFAULT_CONFIG,
+        config: { ...DEFAULT_CONFIG, metersPerPixel: metersPerPixel || 0.6 },
       });
 
       computePromise.then(applyColors).catch(computeLocally);
@@ -361,7 +341,7 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
     }
 
     return undefined;
-  }, [aps, wallSegments, width, height, show, colorScale, minDbm, maxDbm, coverageThreshold]);
+  }, [aps, wallSegments, width, height, show, colorScale, minDbm, maxDbm, coverageThreshold, metersPerPixel]);
 
   useEffect(() => {
     return () => {
@@ -369,149 +349,15 @@ const HeatmapCanvas: React.FC<HeatmapCanvasProps> = ({ aps, walls, width, height
     };
   }, []);
 
-  const heatmapTexture = useMemo(() => {
-    if (!offscreenRef.current) return null;
-    const texture = new CanvasTexture(offscreenRef.current);
-    texture.needsUpdate = true;
-    return texture;
-  }, [heatmapVersion]);
-
-  useEffect(() => {
-    return () => {
-      heatmapTexture?.dispose();
-    };
-  }, [heatmapTexture]);
-
   if (!show) return null;
 
   return (
-    <>
-      <div className="absolute top-4 left-4 z-30 bg-white/90 backdrop-blur rounded-lg shadow-lg border border-slate-200 p-3 w-64 text-xs text-slate-700 space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="font-semibold text-slate-800 text-sm">Signal Heatmap</span>
-          <label className="flex items-center gap-1 text-[11px]">
-            <input type="checkbox" checked={show3d} onChange={(e) => setShow3d(e.target.checked)} className="rounded text-blue-600" />
-            <span>3D</span>
-          </label>
-        </div>
-        <div className="space-y-1">
-          <label className="text-[11px] font-semibold">Color Scale</label>
-          <select
-            value={colorScale}
-            onChange={(e) => setColorScale(e.target.value as ColorScale)}
-            className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="turbo">Turbo</option>
-            <option value="viridis">Viridis</option>
-            <option value="magma">Magma</option>
-          </select>
-        </div>
-        <div className="space-y-1">
-          <label className="text-[11px] font-semibold">Dynamic Range</label>
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              value={minDbm}
-              onChange={(e) => setMinDbm(Number(e.target.value))}
-              className="w-20 border border-slate-200 rounded px-2 py-1 text-xs"
-            />
-            <span className="text-[11px]">to</span>
-            <input
-              type="number"
-              value={maxDbm}
-              onChange={(e) => setMaxDbm(Number(e.target.value))}
-              className="w-20 border border-slate-200 rounded px-2 py-1 text-xs"
-            />
-          </div>
-        </div>
-        <div className="space-y-1">
-          <label className="text-[11px] font-semibold">Coverage Threshold ({coverageThreshold} dBm)</label>
-          <input
-            type="range"
-            min={-95}
-            max={-40}
-            value={coverageThreshold}
-            onChange={(e) => setCoverageThreshold(Number(e.target.value))}
-            className="w-full accent-blue-500"
-          />
-        </div>
-        <label className="flex items-center gap-2 text-[11px]">
-          <input type="checkbox" checked={volumetric} onChange={(e) => setVolumetric(e.target.checked)} className="rounded text-blue-600" />
-          Volumetric overlay
-        </label>
-      </div>
-
-      <canvas
-        ref={canvasRef}
-        width={width}
-        height={height}
-        className="absolute top-0 left-0 pointer-events-none z-10 opacity-80"
-      />
-
-      {show3d && (
-        <div className="absolute bottom-4 right-4 w-80 h-64 bg-white/80 backdrop-blur rounded-lg shadow-lg border border-slate-200 overflow-hidden z-30">
-          <Canvas camera={{ position: [width / 2, 180, height / 2], fov: 45 }} shadows>
-            <ambientLight intensity={0.6} />
-            <directionalLight position={[0, 150, 0]} intensity={0.8} />
-            <group position={[0, 0, 0]}>
-              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[width / 2, 0, height / 2]} receiveShadow>
-                <planeGeometry args={[width, height]} />
-                <meshStandardMaterial color="#f8fafc" side={DoubleSide} />
-              </mesh>
-              {heatmapTexture && (
-                <group>
-                  <mesh rotation={[-Math.PI / 2, 0, 0]} position={[width / 2, volumetric ? 1 : 0.5, height / 2]}>
-                    <planeGeometry args={[width, height]} />
-                    <meshStandardMaterial
-                      map={heatmapTexture}
-                      transparent
-                      opacity={volumetric ? 0.45 : 0.8}
-                      depthWrite={false}
-                      side={DoubleSide}
-                    />
-                  </mesh>
-                  {volumetric && (
-                    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[width / 2, 12, height / 2]}>
-                      <planeGeometry args={[width, height]} />
-                      <meshStandardMaterial
-                        map={heatmapTexture}
-                        transparent
-                        opacity={0.2}
-                        depthWrite={false}
-                        side={DoubleSide}
-                      />
-                    </mesh>
-                  )}
-                </group>
-              )}
-
-              {wallSegments.map(wall => {
-                const midX = (wall.x1 + wall.x2) / 2;
-                const midY = (wall.y1 + wall.y2) / 2;
-                const dx = wall.x2 - wall.x1;
-                const dy = wall.y2 - wall.y1;
-                const length = Math.hypot(dx, dy);
-                const rotation = Math.atan2(dy, dx);
-                return (
-                  <mesh key={`${wall.x1}-${wall.y1}-${wall.x2}-${wall.y2}`} position={[midX, 20, midY]} rotation={[0, -rotation, 0]} castShadow receiveShadow>
-                    <boxGeometry args={[length, 40, 6]} />
-                    <meshStandardMaterial color="#0f172a" opacity={0.85} transparent />
-                  </mesh>
-                );
-              })}
-
-              {aps.map(ap => (
-                <mesh key={ap.id} position={[ap.x, 12, ap.y]} castShadow>
-                  <sphereGeometry args={[8, 24, 24]} />
-                  <meshStandardMaterial color={ap.color} emissive={ap.color} emissiveIntensity={0.4} />
-                </mesh>
-              ))}
-            </group>
-            <OrbitControls enablePan enableZoom enableRotate />
-          </Canvas>
-        </div>
-      )}
-    </>
+    <canvas
+      ref={canvasRef}
+      width={width}
+      height={height}
+      className="absolute top-0 left-0 pointer-events-none z-10 opacity-80"
+    />
   );
 };
 

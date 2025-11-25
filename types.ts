@@ -11,6 +11,8 @@ export interface Project {
   lastModified: string;
   floorCount: number;
   settings: GlobalSettings;
+  aps?: AccessPoint[];
+  walls?: Wall[];
   floorPlan?: FloorPlan;
 }
 
@@ -82,6 +84,7 @@ export interface Wall {
   metadata?: {
     pattern?: string;
     color?: string;
+    [key: string]: any;
   };
 }
 

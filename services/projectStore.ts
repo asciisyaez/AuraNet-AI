@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECTS } from '../constants';
+import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_PROJECTS, DEFAULT_FLOOR_PLAN } from '../constants';
 import { GlobalSettings, PersistedProjectData, Project } from '../types';
 
 type ProjectState = {
@@ -60,6 +60,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       lastModified: formattedDate,
       floorCount: 1,
       settings: get().globalSettings,
+      floorPlan: { ...DEFAULT_FLOOR_PLAN },
+      aps: [],
+      walls: [],
     };
 
     set((state) => ({
