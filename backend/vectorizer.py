@@ -156,8 +156,15 @@ def vectorize_from_wall_mask(
         cv2.MORPH_ELLIPSE,
         (kernel_radius * 2 + 1, kernel_radius * 2 + 1),
     )
+    # Use larger kernel for closing gaps, smaller for opening (noise removal)
+    # This prevents thin walls from being erased by MORPH_OPEN
+    small_kernel_radius = max(1, min(kernel_radius, 2))
+    small_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (small_kernel_radius * 2 + 1, small_kernel_radius * 2 + 1),
+    )
     cleaned = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel, iterations=1)
-    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel, iterations=1)
+    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, small_kernel, iterations=1)
 
     skeleton = skeletonize(cleaned > 0).astype(np.uint8) * 255
     min_spur_px = max(1, int(round(MIN_SPUR_METERS / max(meters_per_pixel, 1e-6))))
