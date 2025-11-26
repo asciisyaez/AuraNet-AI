@@ -6,6 +6,8 @@ from pydantic import BaseModel
 from typing import List, Optional, Tuple
 import uvicorn
 
+from .ml_wall_detection import HEDModelUnavailable, detect_walls_ml
+
 app = FastAPI()
 
 class WallMetadata(BaseModel):
@@ -428,12 +430,25 @@ async def detect_walls_endpoint(file: UploadFile = File(...), metersPerPixel: fl
 async def detect_walls_base64_endpoint(data: dict):
     image_data = data.get("image")
     meters_per_pixel = data.get("metersPerPixel", 0.05)
-    
+    detector = data.get("detector", "opencv")
+
     if not image_data:
         return {"walls": []}
-        
+
     image = decode_image(image_data)
-    walls, preview, diagnostics = detect_walls_opencv(image, meters_per_pixel, mode=data.get("mode", "balanced"))
+
+    if detector == "ml":
+        try:
+            wall_dicts, preview_dict, diagnostics_dict = detect_walls_ml(image, meters_per_pixel)
+            walls = [Wall(**w) for w in wall_dicts]
+            preview = DetectionPreview(**preview_dict) if preview_dict else None
+            diagnostics = DetectionDiagnostics(**diagnostics_dict) if diagnostics_dict else None
+        except HEDModelUnavailable as exc:
+            diagnostics = DetectionDiagnostics(notes=str(exc))
+            walls, preview = [], None
+    else:
+        walls, preview, diagnostics = detect_walls_opencv(image, meters_per_pixel, mode=data.get("mode", "balanced"))
+
     return {"walls": walls, "preview": preview, "diagnostics": diagnostics}
 
 if __name__ == "__main__":
