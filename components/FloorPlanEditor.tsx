@@ -301,7 +301,6 @@ const FloorPlanEditor: React.FC = () => {
           height: img.height,
         });
         setDetectionPreview(null);
-        setDetectionDiagnostics(null);
         setShowFloorPlan(true);
         setTransform({
           x: (containerRef.current?.clientWidth ?? 800) / 2 - img.width / 2,
@@ -318,7 +317,6 @@ const FloorPlanEditor: React.FC = () => {
     persistFloorPlan({ imageDataUrl: undefined, imageName: undefined, width: undefined, height: undefined });
     setShowFloorPlan(false);
     setDetectionPreview(null);
-    setDetectionDiagnostics(null);
   };
 
   const applyScaleFromInput = (distanceMeters: number, reference?: ScaleReference | null) => {
