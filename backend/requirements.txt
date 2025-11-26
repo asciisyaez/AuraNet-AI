@@ -6,3 +6,6 @@ numpy
 pydantic
 scipy
 scikit-learn
+scikit-image
+onnxruntime
+pytest

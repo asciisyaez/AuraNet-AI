@@ -17,13 +17,15 @@ import asyncio
 import time
 import math
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Dict
+from typing import Any, List, Optional, Tuple, Dict
 from collections import defaultdict
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
+
+from backend.ml_wall_detection import get_detector, WallDetectionResult
 
 app = FastAPI(title="AuraNet-AI Backend - Wall Detection v2")
 
@@ -67,6 +69,15 @@ class DetectionPreview(BaseModel):
 class DetectionResponse(BaseModel):
     walls: List[Wall]
     preview: Optional[DetectionPreview] = None
+    overlayPngBase64: Optional[str] = None
+    diagnostics: Optional[Dict[str, Any]] = None
+
+
+class DetectWallsRequest(BaseModel):
+    image: str
+    metersPerPixel: float = 0.05
+    detector: Optional[str] = None
+    sessionId: Optional[str] = "default"
 
 
 @dataclass
@@ -472,6 +483,25 @@ class DetectionState:
 detection_state = DetectionState()
 
 
+def _segments_to_walls(segments: List[Tuple[float, float, float, float]]) -> List[Wall]:
+    walls: List[Wall] = []
+    for i, (x1, y1, x2, y2) in enumerate(segments):
+        walls.append(Wall(
+            id=f"wall-{i}",
+            x1=float(x1),
+            y1=float(y1),
+            x2=float(x2),
+            y2=float(y2),
+            material="Concrete",
+            attenuation=12.0,
+            thickness=10,
+            height=3.0,
+            elevation=0.0,
+            metadata=WallMetadata(color="#475569")
+        ))
+    return walls
+
+
 def detect_walls_v2(image: np.ndarray, meters_per_pixel: float,
                     progress_callback=None) -> Tuple[List[Wall], np.ndarray, int, Dict]:
     """
@@ -626,44 +656,97 @@ async def detection_progress(session_id: str):
 
 
 @app.post("/api/detect-walls-base64", response_model=DetectionResponse)
-async def detect_walls_base64_endpoint(data: dict):
-    image_data = data.get("image")
-    meters_per_pixel = data.get("metersPerPixel", 0.05)
-    session_id = data.get("sessionId", "default")
-    
-    if not image_data:
-        return DetectionResponse(walls=[])
-    
-    image = decode_image(image_data)
-    if image is None:
-        return DetectionResponse(walls=[])
-    
-    def progress_callback(stage: str, percent: int, message: str):
+async def detect_walls_base64_endpoint(req: DetectWallsRequest):
+    start_time = time.time()
+    detector_name = (req.detector or "ml")
+    session_id = req.sessionId or "default"
+
+    detection_state.current_progress[session_id] = {
+        "stage": "initializing",
+        "percent": 5,
+        "message": f"Preparing detector {detector_name}",
+    }
+
+    if not req.image:
         detection_state.current_progress[session_id] = {
-            "stage": stage,
-            "percent": percent,
-            "message": message
+            "stage": "error",
+            "percent": 100,
+            "message": "No image supplied",
         }
-    
-    walls, overlay, processing_ms, stats = detect_walls_v2(
-        image, meters_per_pixel, progress_callback
-    )
-    
+        return DetectionResponse(walls=[], diagnostics={"detector": detector_name, "notes": "Missing image"})
+
+    image = decode_image(req.image)
+    if image is None:
+        detection_state.current_progress[session_id] = {
+            "stage": "error",
+            "percent": 100,
+            "message": "Invalid image data",
+        }
+        return DetectionResponse(walls=[], diagnostics={"detector": detector_name, "notes": "Invalid image"})
+
+    try:
+        detector = get_detector(detector_name)  # type: ignore[arg-type]
+    except ValueError:
+        detector = get_detector("ml")
+        detector_name = "ml"
+
+    try:
+        detection_state.current_progress[session_id] = {
+            "stage": "detecting",
+            "percent": 40,
+            "message": f"Running {detector_name}",
+        }
+        result: WallDetectionResult = detector.detect(
+            image_bgr=image,
+            meters_per_pixel=req.metersPerPixel,
+        )
+    except Exception as exc:
+        detection_state.current_progress[session_id] = {
+            "stage": "error",
+            "percent": 100,
+            "message": "Wall detector failed",
+        }
+        return DetectionResponse(
+            walls=[],
+            diagnostics={
+                "detector": detector_name,
+                "error": str(exc),
+                "notes": "Wall detector failed; see server logs.",
+            },
+        )
+
+    walls = _segments_to_walls(result.walls)
+    processing_ms = int((time.time() - start_time) * 1000)
     preview = DetectionPreview(
-        overlay=encode_image(overlay),
+        overlay=result.overlay_png_base64,
         wall_count=len(walls),
-        processing_ms=processing_ms
+        processing_ms=processing_ms,
     )
-    
-    return DetectionResponse(walls=walls, preview=preview)
+    diagnostics = result.diagnostics or {}
+    diagnostics.setdefault("detector", detector_name)
+
+    detection_state.current_progress[session_id] = {
+        "stage": "completed",
+        "percent": 100,
+        "message": "Wall detection complete",
+    }
+
+    return DetectionResponse(
+        walls=walls,
+        preview=preview,
+        overlayPngBase64=result.overlay_png_base64,
+        diagnostics=diagnostics,
+    )
 
 
 @app.post("/api/detect-walls", response_model=DetectionResponse)
 async def detect_walls_endpoint(
     file: UploadFile = File(...), 
     metersPerPixel: float = Form(...),
-    sessionId: str = Form("default")
+    sessionId: str = Form("default"),
+    detector: Optional[str] = Form(None),
 ):
+    start_time = time.time()
     contents = await file.read()
     nparr = np.frombuffer(contents, np.uint8)
     image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -671,24 +754,66 @@ async def detect_walls_endpoint(
     if image is None:
         return DetectionResponse(walls=[])
     
-    def progress_callback(stage: str, percent: int, message: str):
+    detector_name = detector or "ml"
+    detection_state.current_progress[sessionId] = {
+        "stage": "initializing",
+        "percent": 5,
+        "message": f"Preparing detector {detector_name}",
+    }
+
+    try:
+        detector_impl = get_detector(detector_name)  # type: ignore[arg-type]
+    except ValueError:
+        detector_impl = get_detector("ml")
+        detector_name = "ml"
+
+    try:
         detection_state.current_progress[sessionId] = {
-            "stage": stage,
-            "percent": percent,
-            "message": message
+            "stage": "detecting",
+            "percent": 40,
+            "message": f"Running {detector_name}",
         }
-    
-    walls, overlay, processing_ms, stats = detect_walls_v2(
-        image, metersPerPixel, progress_callback
-    )
-    
+        result: WallDetectionResult = detector_impl.detect(
+            image_bgr=image,
+            meters_per_pixel=metersPerPixel,
+        )
+    except Exception as exc:
+        detection_state.current_progress[sessionId] = {
+            "stage": "error",
+            "percent": 100,
+            "message": "Wall detector failed",
+        }
+        return DetectionResponse(
+            walls=[],
+            diagnostics={
+                "detector": detector_name,
+                "error": str(exc),
+                "notes": "Wall detector failed; see server logs.",
+            },
+        )
+
+    walls = _segments_to_walls(result.walls)
+    processing_ms = int((time.time() - start_time) * 1000)
     preview = DetectionPreview(
-        overlay=encode_image(overlay),
+        overlay=result.overlay_png_base64,
         wall_count=len(walls),
-        processing_ms=processing_ms
+        processing_ms=processing_ms,
     )
-    
-    return DetectionResponse(walls=walls, preview=preview)
+    diagnostics = result.diagnostics or {}
+    diagnostics.setdefault("detector", detector_name)
+
+    detection_state.current_progress[sessionId] = {
+        "stage": "completed",
+        "percent": 100,
+        "message": "Wall detection complete",
+    }
+
+    return DetectionResponse(
+        walls=walls,
+        preview=preview,
+        overlayPngBase64=result.overlay_png_base64,
+        diagnostics=diagnostics,
+    )
 
 
 @app.get("/health")
