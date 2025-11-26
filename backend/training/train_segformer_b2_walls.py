@@ -1,14 +1,16 @@
 import argparse
 import os
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, List, Optional
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import SegformerForSemanticSegmentation, SegformerConfig
 
 from backend.training.datasets.cubicasa5k import CubiCasaWalls
+from backend.training.datasets.roboflow_walls import RoboflowWalls
+from backend.training.datasets.combined import CombinedWallsDataset
 
 
 def dice_loss(logits: torch.Tensor, targets: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -44,21 +46,100 @@ def evaluate(model: SegformerForSemanticSegmentation, loader: DataLoader, device
     return mean_loss, mean_iou
 
 
+def build_datasets(
+    cubicasa_root: Optional[str],
+    roboflow_root: Optional[str],
+    split: str,
+    augment: bool,
+    target_size: Tuple[int, int] = (512, 512),
+) -> Dataset:
+    """
+    Build a combined dataset from available sources.
+    
+    Args:
+        cubicasa_root: Path to CubiCasa5k dataset (optional)
+        roboflow_root: Path to Roboflow floor-plan-walls dataset (optional)
+        split: 'train', 'val', or 'test'
+        augment: Whether to apply data augmentation
+        target_size: Target image size for all samples
+    
+    Returns:
+        Combined Dataset ready for training
+    """
+    datasets = []
+    
+    if cubicasa_root and Path(cubicasa_root).exists():
+        try:
+            ds = CubiCasaWalls(cubicasa_root, split=split, augment=augment)
+            datasets.append(ds)
+            print(f"  Loaded CubiCasa5k {split}: {len(ds)} samples")
+        except Exception as e:
+            print(f"  Warning: Could not load CubiCasa5k: {e}")
+    
+    if roboflow_root and Path(roboflow_root).exists():
+        try:
+            ds = RoboflowWalls(roboflow_root, split=split, augment=augment)
+            datasets.append(ds)
+            print(f"  Loaded Roboflow Walls {split}: {len(ds)} samples")
+        except Exception as e:
+            print(f"  Warning: Could not load Roboflow Walls: {e}")
+    
+    if not datasets:
+        raise ValueError("No valid datasets found. Provide at least one of --cubicasa-root or --roboflow-root")
+    
+    if len(datasets) == 1:
+        # Single dataset - wrap with resize only
+        return CombinedWallsDataset(datasets, target_size=target_size)
+    
+    # Multiple datasets - combine
+    combined = CombinedWallsDataset(datasets, target_size=target_size)
+    stats = combined.get_dataset_stats()
+    print(f"  Combined dataset: {stats['total_samples']} total samples from {stats['num_datasets']} sources")
+    return combined
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train SegFormer-B2 wall segmentation model.")
-    parser.add_argument("--data-root", required=True, help="Dataset root containing images/ and masks/ folders")
+    parser.add_argument("--cubicasa-root", type=str, default=None,
+                        help="CubiCasa5k dataset root (images/ and masks/ folders)")
+    parser.add_argument("--roboflow-root", type=str, default=None,
+                        help="Roboflow floor-plan-walls dataset root (train/valid/test folders)")
+    parser.add_argument("--data-root", type=str, default=None,
+                        help="Legacy: same as --cubicasa-root for backwards compatibility")
     parser.add_argument("--output-dir", required=True, help="Directory to store checkpoints")
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--image-size", type=int, default=512, help="Target image size (square)")
     args = parser.parse_args()
 
+    # Handle legacy --data-root argument
+    cubicasa_root = args.cubicasa_root or args.data_root
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
     os.makedirs(args.output_dir, exist_ok=True)
 
-    train_ds = CubiCasaWalls(args.data_root, split="train", augment=True)
-    val_ds = CubiCasaWalls(args.data_root, split="val", augment=False)
+    target_size = (args.image_size, args.image_size)
+    
+    print("Loading training datasets...")
+    train_ds = build_datasets(
+        cubicasa_root=cubicasa_root,
+        roboflow_root=args.roboflow_root,
+        split="train",
+        augment=True,
+        target_size=target_size,
+    )
+    
+    print("Loading validation datasets...")
+    val_ds = build_datasets(
+        cubicasa_root=cubicasa_root,
+        roboflow_root=args.roboflow_root,
+        split="val",
+        augment=False,
+        target_size=target_size,
+    )
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)

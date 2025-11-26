@@ -3,3 +3,5 @@ torchvision
 transformers
 tqdm
 Pillow
+roboflow
+PyYAML
