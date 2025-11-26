@@ -18,3 +18,11 @@ View your app in AI Studio: https://ai.studio/apps/drive/1WdBp4jB4Y3Pe2q3HYbGPec
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+### Backend wall detection (optional)
+
+To experiment with wall detection locally:
+
+1. Install backend dependencies: `pip install -r backend/requirements.txt`
+2. Start FastAPI: `uvicorn backend.main:app --reload`
+3. Call `/api/detect-walls-base64` with your floor plan image. Pass `{"detector": "ml"}` to enable the experimental HED-powered pipeline described in [backend/ML_DETECTION.md](backend/ML_DETECTION.md).
