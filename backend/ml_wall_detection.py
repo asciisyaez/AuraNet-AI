@@ -62,40 +62,8 @@ def detect_walls_ml(image: np.ndarray, meters_per_pixel: float) -> Tuple[List[Di
             "delete backend/models and retry."
         ) from exc
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    # Suppress thin strokes (text, rulers, dimensions) before vectorization
-    denoised = cv2.fastNlMeansDenoising(gray, h=10)
-    text_thresh = cv2.adaptiveThreshold(
-        denoised,
-        255,
-        cv2.ADAPTIVE_THRESH_MEAN_C,
-        cv2.THRESH_BINARY_INV,
-        15,
-        5,
-    )
-
-    stroke_map = cv2.distanceTransform(text_thresh, cv2.DIST_L2, 3)
-    thin_stroke_px = max(2, int(0.02 / meters_per_pixel))
-    thin_mask = (stroke_map < thin_stroke_px).astype(np.uint8) * 255
-    text_candidates = cv2.bitwise_and(text_thresh, thin_mask)
-
-    max_text_area = max(32, int((0.15 / meters_per_pixel) ** 2))
-    text_mask = np.zeros_like(text_candidates)
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(text_candidates, connectivity=8)
-    for label in range(1, num_labels):
-        area = stats[label, cv2.CC_STAT_AREA]
-        width = stats[label, cv2.CC_STAT_WIDTH]
-        height = stats[label, cv2.CC_STAT_HEIGHT]
-        aspect = max(width, height) / max(1, min(width, height))
-
-        if area <= max_text_area or (min(width, height) <= thin_stroke_px * 1.6 and aspect >= 6):
-            text_mask[labels == label] = 255
-
-    clean_edges = cv2.bitwise_and(edge_map, edge_map, mask=cv2.bitwise_not(text_mask))
-
     # Boost edges and binarize
-    enhanced = cv2.GaussianBlur(clean_edges, (5, 5), 0)
+    enhanced = cv2.GaussianBlur(edge_map, (5, 5), 0)
     _, binary = cv2.threshold(enhanced, 30, 255, cv2.THRESH_BINARY)
 
     # Connect close strokes to form thicker wall candidates
@@ -119,7 +87,7 @@ def detect_walls_ml(image: np.ndarray, meters_per_pixel: float) -> Tuple[List[Di
     )
 
     walls: List[Dict] = []
-    overlay = _render_glow_overlay(image, lines)
+    overlay = cv2.cvtColor(closed, cv2.COLOR_GRAY2BGR)
 
     if lines is not None:
         for idx, line in enumerate(lines):
@@ -150,8 +118,7 @@ def detect_walls_ml(image: np.ndarray, meters_per_pixel: float) -> Tuple[List[Di
         "raw_segments": len(lines) if lines is not None else 0,
         "merged_segments": len(walls),
         "gap_closures": 0,
-        "text_suppressed_px": int(np.count_nonzero(text_mask)),
-        "notes": "HED edge map → thin-stroke suppression → morphological closing → HoughLinesP",
+        "notes": "HED edge map → morphological closing → HoughLinesP",
     }
 
     return walls, preview, diagnostics
@@ -160,19 +127,3 @@ def detect_walls_ml(image: np.ndarray, meters_per_pixel: float) -> Tuple[List[Di
 def _encode_overlay(image: np.ndarray) -> str:
     _, buffer = cv2.imencode('.png', image)
     return f"data:image/png;base64,{base64.b64encode(buffer).decode('utf-8')}"
-
-
-def _render_glow_overlay(image: np.ndarray, lines) -> np.ndarray:
-    base = image.copy()
-    glow = np.zeros_like(base)
-    highlight_color = (37, 211, 255)  # BGR neon teal
-
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            cv2.line(glow, (x1, y1), (x2, y2), highlight_color, thickness=6, lineType=cv2.LINE_AA)
-
-    blurred = cv2.GaussianBlur(glow, (0, 0), sigmaX=6, sigmaY=6)
-    composite = cv2.addWeighted(base, 0.55, blurred, 0.45, 0)
-    composite = cv2.addWeighted(composite, 0.8, glow, 0.6, 0)
-    return composite

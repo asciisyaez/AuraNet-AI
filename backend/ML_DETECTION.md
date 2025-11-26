@@ -5,9 +5,8 @@ This backend now exposes an experimental ML detector that runs a Holistically-Ne
 ## How it works
 1. Download a pre-trained HED Caffe model (lazy-downloaded on first run to `backend/models`).
 2. Run HED to obtain a dense edge map that preserves faint blueprint strokes better than Canny.
-3. Suppress thin strokes (text, rulers, dimension lines) via stroke-width filtering and connected-component pruning.
-4. Morphologically close edges into wall-like blobs and vectorize them with a probabilistic Hough transform.
-5. Return vector walls, a glowing overlay preview, and diagnostics showing edge density, suppressed pixels, and segment counts.
+3. Morphologically close edges into wall-like blobs and vectorize them with a probabilistic Hough transform.
+4. Return vector walls, an overlay preview, and diagnostics showing edge density and segment counts.
 
 ## Usage
 ```
@@ -23,10 +22,5 @@ If the weights are missing or corrupted, the API responds with empty walls and a
 
 ## Notes
 - The HED caffemodel (~50 MB) is downloaded from the OpenCV extra testdata repository on demand; keep it cached between runs for speed.
-- Tune `metersPerPixel` accurately—the morphology kernel, thin-stroke filters, and minimum segment length scale with it.
+- Tune `metersPerPixel` accurately—the morphology kernel and minimum segment length scale with it.
 - This path is intentionally simple and should be treated as a baseline for further ML experiments (e.g., DexiNed, wireframe detectors, or custom fine-tuning on your floor plan corpus).
-
-## Researching better weights & validation
-- See `backend/MODEL_RESEARCH.md` for a curated list of candidate edge/segmentation models (DexiNed, HAWP, SegFormer) and how to slot their weights into this pipeline.
-- Use `backend/wall_benchmark.py` to validate any candidate weights against a labeled floor-plan set (image + wall-mask pairs). The script reports pixel IoU/precision/recall and a structural F1 score derived from coverage with a tolerance band.
-- Do not adopt a model unless it clears ≥98% wall IoU on a held-out set representative of your production scans.
